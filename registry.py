@@ -36,9 +36,9 @@ def validate(records):
             raise ValueError('사용 여부가 올바르지 않습니다.')
         if not .5 <= float(r['threshold']) <= 1:
             raise ValueError('인식 기준은 0.5~1입니다.')
-        for key in ('cooldown', 'disappear_timeout'):
+        for key in ('cooldown',):
             if not math.isfinite(float(r[key])) or float(r[key]) < .5:
-                raise ValueError('클릭 간격과 사라짐 제한은 0.5초 이상이어야 합니다.')
+                raise ValueError('클릭 간격은 0.5초 이상이어야 합니다.')
         roi = r.get('roi')
         if roi is not None and (len(roi) != 4 or any(type(x) is not int for x in roi)
                                 or min(roi[:2]) < 0 or min(roi[2:]) <= 0):

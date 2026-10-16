@@ -154,10 +154,9 @@ class RuleManager:
                 j=i+offset;steps[i],steps[j]=steps[j],steps[i];redraw();listing.selection_set(str(j))
         for text,fn in [('선택 단계 수정',replace_step),('단계 위로',lambda:change(-1)),('단계 아래로',lambda:change(1)),('단계 삭제',change)]:
             ttk.Button(controls,text=text,command=fn).pack(side='left',padx=4)
-        timeout=tk.StringVar(value=str(draft['timeout']));once=tk.BooleanVar(value=draft['once'])
+        once=tk.BooleanVar(value=draft['once'])
         finish=tk.StringVar(value='매크로 중지' if draft['finish']=='stop' else '일반 클릭 재개')
-        ttk.Label(win,text='단계 이미지 대기 제한 (초)').grid(row=6,column=0,sticky='w',padx=10)
-        ttk.Entry(win,textvariable=timeout,width=15).grid(row=6,column=1)
+        ttk.Label(win,text='모든 단계 이미지 대기: 시간 제한 없음').grid(row=6,column=0,sticky='w',padx=10)
         ttk.Checkbutton(win,text='실행당 한 번만',variable=once).grid(row=6,column=2,columnspan=2)
         ttk.Label(win,text='완료 후').grid(row=7,column=0,sticky='w',padx=10)
         ttk.Combobox(win,textvariable=finish,values=['매크로 중지','일반 클릭 재개'],state='readonly').grid(row=7,column=1,columnspan=2)
@@ -167,7 +166,7 @@ class RuleManager:
             try:
                 draft.update(name=name.get().strip(),enabled=enabled.get(),steps=steps,
                     trigger=next((r['id'] for r in conditions if r['name']==trigger.get()),''),
-                    success=next((r['id'] for r in conditions if r['name']==success.get()),''),timeout=float(timeout.get()),
+                    success=next((r['id'] for r in conditions if r['name']==success.get()),''),timeout=draft.get('timeout',30.),
                     once=once.get(),finish='stop' if finish.get()=='매크로 중지' else 'resume')
                 rules=copy.deepcopy(self.app.rules)
                 if adding:rules.append(draft)

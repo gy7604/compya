@@ -41,12 +41,15 @@ class RuleTests(unittest.TestCase):
         for t in [86401,86402,86403,86404]:m.observe({},t)
         self.assertIsNotNone(m.active)
 
-    def test_rule_step_disappearance_timeout_is_still_enforced(self):
+    def test_rule_step_disappearance_can_wait_for_a_day(self):
         records,rule=fixtures()
         rule.update(steps=[{'button':'pause','verify':'disappear'}],success='')
         m=WorkflowMachine(records,[rule],0)
         for t in range(6):m.observe({'goal':True,'pause':True},t)
-        with self.assertRaises(SafetyStop):m.observe({'pause':True},13)
+        self.assertIsNone(m.observe({'pause':True},86400))
+        self.assertEqual(m.phase,'verify')
+        for t in [86401,86402,86403]:m.observe({},t)
+        self.assertTrue(m.finished)
 
     def runner(self, dry, progress=False):
         records,rule=fixtures()
@@ -127,8 +130,9 @@ class RuleTests(unittest.TestCase):
         m=WorkflowMachine(records,[rule],0)
         for t in range(6):
             self.assertIsNone(m.observe({'goal':True,'confirm':True},t))
-        with self.assertRaises(SafetyStop) as error:m.observe({'confirm':True},33)
-        self.assertIn('pause',str(error.exception))
+        self.assertIsNone(m.observe({'confirm':True},86400))
+        self.assertEqual(m.index,0)
+        self.assertEqual(m.phase,'wait')
 
     def test_next_image_visible_before_tap_does_not_confirm_transition(self):
         records,rule=fixtures()
@@ -194,3 +198,18 @@ class RuleTests(unittest.TestCase):
             store=RuleStore(folder)
             store.save([r],list(records.values()))
             self.assertEqual(store.load(records),[r])
+
+
+    def test_next_image_and_final_image_can_wait_indefinitely_then_resume(self):
+        records,rule=fixtures()
+        rule.update(steps=[{'button':'pause','verify':'next'}])
+        m=WorkflowMachine(records,[rule],0)
+        for t in range(6):m.observe({'goal':True,'pause':True},t)
+        self.assertIsNone(m.observe({},86400))
+        self.assertEqual(m.phase,'verify')
+        for t in [86401,86402,86403]:m.observe({'done':True},t)
+        self.assertEqual(m.phase,'success')
+        self.assertIsNone(m.observe({},172800))
+        self.assertEqual(m.phase,'success')
+        for t in [172801,172802,172803]:m.observe({'done':True},t)
+        self.assertTrue(m.finished)

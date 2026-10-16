@@ -106,7 +106,7 @@ class ButtonManager:
         win.bind('<Destroy>', restore_manager)
         values = {}
         labels = [('name', '버튼 이름'), ('threshold', '인식 기준 (0.5~1)'),
-                  ('cooldown', '클릭 후 최소 간격 (초)'), ('disappear_timeout', '규칙용 사라짐 제한 (초)'),
+                  ('cooldown', '클릭 후 최소 간격 (초)'),
                   ('roi', '검색 영역 x,y,너비,높이 (빈칸=전체)')]
         for row, (key, label) in enumerate(labels):
             v = draft.get(key)
@@ -226,7 +226,7 @@ class ButtonManager:
                 return
             try:
                 draft['name'] = values['name'].get().strip()
-                for key in ('threshold', 'cooldown', 'disappear_timeout'):
+                for key in ('threshold', 'cooldown'):
                     draft[key] = float(values[key].get())
                 draft['enabled'] = enabled.get()
                 draft['kind'] = next(key for key, label in kind_labels.items() if label == kind.get())

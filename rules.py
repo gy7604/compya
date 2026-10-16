@@ -1,10 +1,8 @@
 """Declarative image-triggered workflows. No arbitrary scripts or coordinates."""
 import json
-import math
 from pathlib import Path
 import uuid
 from actions import ActionMachine
-from engine import SafetyStop
 
 
 def new_rule(name='새 조건 규칙'):
@@ -23,8 +21,6 @@ def validate_rules(rules, records):
             raise ValueError('규칙 사용 여부가 올바르지 않습니다.')
         if rule['finish'] not in ('stop', 'resume'):
             raise ValueError('규칙 완료 동작이 올바르지 않습니다.')
-        if not math.isfinite(float(rule['timeout'])) or not .5 <= float(rule['timeout']) <= 3600:
-            raise ValueError('단계 대기 제한은 0.5~3600초입니다.')
         if len(rule['steps']) > 30:
             raise ValueError('규칙 단계는 최대 30개입니다.')
         for index, step in enumerate(rule['steps']):
@@ -149,10 +145,6 @@ class WorkflowMachine:
         record = self.records[key]
         if rule['success'] and not present.get(rule['success'], False):
             self.success_armed = True
-        limit = record['disappear_timeout'] if self.phase == 'verify' and step['verify'] == 'disappear' else rule['timeout']
-        if now-self.since >= limit:
-            phase = {'wait':'버튼 나타남 대기', 'verify':'클릭 후 확인', 'success':'최종 이미지 대기'}[self.phase]
-            raise SafetyStop(f'규칙 "{rule["name"]}" {self.index+1}단계 "{record["name"]}" · {phase} {limit:g}초 시간 초과')
         if self.phase == 'wait':
             self.visible = self.visible+1 if present.get(key, False) else 0
             if self.visible >= self.detection_frames and now >= self.next_allowed:

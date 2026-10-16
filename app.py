@@ -70,7 +70,7 @@ class App:
         ttk.Label(form, text='인식 반응속도').grid(row=0, column=2, padx=8)
         ttk.Combobox(form, textvariable=self.fields['speed'], values=list(MODES), state='readonly', width=22).grid(row=1, column=2, padx=8)
         ttk.Button(form,text='진행 보조 클릭 설정',command=self.manage_progress).grid(row=2,column=2,padx=8)
-        ttk.Label(form, text='일반 버튼: 나타남 / 사라짐 대기 시간 제한 없음').grid(row=3, column=0, columnspan=2, sticky='w')
+        ttk.Label(form, text='일반 버튼 · 조건 규칙: 이미지 대기 시간 제한 없음').grid(row=3, column=0, columnspan=2, sticky='w')
         ttk.Button(form,text='휴대폰 알림 설정',command=self.manage_notifications).grid(row=3,column=2,padx=8)
         self.button_summary = tk.StringVar(value=f'등록 {len(self.records)}개 / 사용 {sum(r["enabled"] for r in self.records)}개')
         ttk.Button(form, text='버튼 관리 · 추가 / 수정 / 이미지 교체', command=self.manage).grid(row=4, column=0, padx=0, pady=12)
@@ -319,7 +319,7 @@ class App:
             frames, interval = speed_settings(cfg.get('speed', DEFAULT_MODE))
             machine = WorkflowMachine(records, rules, time.monotonic(), detection_frames=frames)
             self.emit('시작 · ' + ('모의 실행' if cfg['dry'] else '실제 탭 전송'))
-            self.emit('일반 버튼 나타남 / 사라짐 대기는 시간 제한 없이 계속합니다.')
+            self.emit('일반 버튼과 조건 규칙의 나타남 / 사라짐 / 최종 이미지 대기는 시간 제한 없이 계속합니다.')
             self.emit(f'반응속도 · 인식 {frames}회 / 추가 화면 대기 {interval:g}초 / 전환 확인 3회 유지')
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             if progress_config['enabled']:
