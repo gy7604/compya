@@ -341,7 +341,7 @@ class App:
             machine = WorkflowMachine(records, rules, time.monotonic(), detection_frames=frames)
             self.emit('시작 · ' + ('모의 실행' if cfg['dry'] else '실제 탭 전송'))
             self.emit('일반 버튼과 조건 규칙의 나타남 / 사라짐 / 최종 이미지 대기는 시간 제한 없이 계속합니다.')
-            self.emit(f'반응속도 · 인식 {frames}회 / 추가 화면 대기 {interval:g}초 / 전환 확인 3회 유지')
+            self.emit(f'반응속도 · 인식 {frames}회 / 추가 화면 대기 {interval:g}초 / 규칙 전환 확인 3회 / 일반 버튼 사라짐 확인은 버튼별 설정')
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             if progress_config['enabled']:
                 self.emit(f'진행 보조 클릭 ON · 두 이미지 미인식 {float(progress_config["delay"]):g}초 후 / {float(progress_config["interval"]):g}초 간격 / 좌표={tuple(progress_config["point"])}')
@@ -426,7 +426,11 @@ class App:
                     self.emit(('모의 실행 · ' if cfg['dry'] else '실제 실행 · ') + state + ' · ' + scores)
                     if machine.normal.pending and machine.active is None:
                         name=records[machine.normal.pending]['name']
-                        self.emit(f'클릭 보류 · {name} 사라짐 확인 {machine.normal.absent}/3회. 아직 인식되면 다음 클릭을 보내지 않습니다.')
+                        policy=records[machine.normal.pending]
+                        required=policy.get('disappear_frames',3);limit=policy.get('retry_limit',0)
+                        detail=f'설정한 간격 후 같은 버튼만 최대 {limit}회 재클릭 (현재 {machine.normal.retries}회)' if limit else '자동 재클릭 OFF'
+                        if limit and machine.normal.retries>=limit:detail='자동 재클릭 한도 도달 · 추가 클릭 없이 대기'
+                        self.emit(f'클릭 보류 · {name} 사라짐 확인 {machine.normal.absent}/{required}회 · {detail}')
                     previous_state, heartbeat = state, now
                 self.stop.wait(interval)
         except Exception as e:

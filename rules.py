@@ -145,7 +145,10 @@ class WorkflowMachine:
         # A stable condition takes precedence over issuing further normal taps.
         if ready and self.normal.pending is None:
             return None
-        return self.normal.observe({key: present.get(key, False) for key in self.normal_ids}, now)
+        action=self.normal.observe({key: present.get(key, False) for key in self.normal_ids}, now)
+        if self.normal.retry_event:
+            self.events.append(f'자동 재클릭 · {self.records[action]["name"]} · {self.normal.retries}/{self.records[action].get("retry_limit",0)}회')
+        return action
 
     def observe_rule(self, present, now):
         rule = self.active

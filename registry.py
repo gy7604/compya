@@ -7,7 +7,7 @@ from pathlib import Path
 
 def new_button(name='새 버튼'):
     return dict(id=uuid.uuid4().hex, name=name, enabled=False, template='',
-                roi=None, size=None, threshold=.90, cooldown=2., click_delay=0., disappear_timeout=8., kind='normal',
+                roi=None, size=None, threshold=.90, cooldown=2., click_delay=0., retry_interval=8., retry_limit=0, disappear_frames=3, disappear_timeout=8., kind='normal',
                 click_mode='center', click_point=None, click_size=None)
 
 
@@ -42,6 +42,13 @@ def validate(records):
         delay=float(r.get('click_delay',0))
         if not math.isfinite(delay) or not 0<=delay<=3600:
             raise ValueError('클릭 전 대기는 0~3600초입니다.')
+        if type(r.get('retry_limit',0)) is not int or not 0<=r.get('retry_limit',0)<=10:
+            raise ValueError('자동 재클릭 횟수는 0~10회입니다. 0은 사용 안 함입니다.')
+        if type(r.get('disappear_frames',3)) is not int or not 1<=r.get('disappear_frames',3)<=3:
+            raise ValueError('일반 버튼 사라짐 확인은 1~3회입니다.')
+        retry=float(r.get('retry_interval',8))
+        if not math.isfinite(retry) or not 2<=retry<=3600:
+            raise ValueError('자동 재클릭 간격은 2~3600초입니다.')
         roi = r.get('roi')
         if roi is not None and (len(roi) != 4 or any(type(x) is not int for x in roi)
                                 or min(roi[:2]) < 0 or min(roi[2:]) <= 0):
