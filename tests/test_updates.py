@@ -43,7 +43,7 @@ class UpdateTests(unittest.TestCase):
             with zipfile.ZipFile(archive) as z:
                 names = z.namelist()
                 self.assertIn('V26Macro/V26Macro.exe', names)
-                self.assertFalse(any('buttons.json' in n or 'rules.json' in n or 'progress.json' in n or 'last_settings.json' in n or 'custom.png' in n for n in names))
+                self.assertFalse(any('buttons.json' in n or 'rules.json' in n or 'progress.json' in n or 'notifications.json' in n or 'last_settings.json' in n or 'custom.png' in n for n in names))
 
     def test_version_order(self):
         self.assertGreater(version_tuple('v1.10.0'), version_tuple('1.9.0'))
@@ -118,7 +118,7 @@ class UpdateTests(unittest.TestCase):
             (parent/'UpdateHelper.exe').write_bytes(b'MZ'+content)
             (parent/'_internal').mkdir()
             (parent/'_internal'/'runtime').write_bytes(content)
-        for name in ('buttons.json', 'last_settings.json', 'rules.json', 'progress.json'):
+        for name in ('buttons.json', 'last_settings.json', 'rules.json', 'progress.json', 'notifications.json'):
             (root/name).write_bytes(b'user settings')
         (root/'assets'/'buttons').mkdir(parents=True)
         (root/'assets'/'buttons'/'custom.png').write_bytes(b'user image')
@@ -129,6 +129,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((root/'last_settings.json').read_bytes(), b'user settings')
         self.assertEqual((root/'rules.json').read_bytes(), b'user settings')
         self.assertEqual((root/'progress.json').read_bytes(), b'user settings')
+        self.assertEqual((root/'notifications.json').read_bytes(), b'user settings')
         self.assertEqual((root/'assets'/'buttons'/'custom.png').read_bytes(), b'user image')
 
     def test_replace_preserves_settings_images_and_backup(self):

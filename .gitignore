@@ -16,3 +16,5 @@ assets/buttons/
 assets/*_custom.*
 .env
 .env.*
+
+notifications.json

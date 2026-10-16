@@ -15,6 +15,7 @@ from registry import Registry
 from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
+from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
 from progress import ProgressStore, ProgressClicker, default_progress, validate_progress
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -48,6 +49,9 @@ class App:
         self.rules = self.rule_store.load(self.records)
         self.progress_store = ProgressStore(ROOT)
         self.progress = self.progress_store.load()
+        self.notification_store = NotificationStore(ROOT)
+        self.notifications = self.notification_store.load()
+        self.notification_manager = None
         self.manager = None
         self.rule_manager = None
         self.progress_manager = None
@@ -66,7 +70,8 @@ class App:
         ttk.Label(form, text='인식 반응속도').grid(row=0, column=2, padx=8)
         ttk.Combobox(form, textvariable=self.fields['speed'], values=list(MODES), state='readonly', width=22).grid(row=1, column=2, padx=8)
         ttk.Button(form,text='진행 보조 클릭 설정',command=self.manage_progress).grid(row=2,column=2,padx=8)
-        ttk.Label(form, text='일반 버튼: 나타남 / 사라짐 대기 시간 제한 없음').grid(row=3, column=0, columnspan=3, sticky='w')
+        ttk.Label(form, text='일반 버튼: 나타남 / 사라짐 대기 시간 제한 없음').grid(row=3, column=0, columnspan=2, sticky='w')
+        ttk.Button(form,text='휴대폰 알림 설정',command=self.manage_notifications).grid(row=3,column=2,padx=8)
         self.button_summary = tk.StringVar(value=f'등록 {len(self.records)}개 / 사용 {sum(r["enabled"] for r in self.records)}개')
         ttk.Button(form, text='버튼 관리 · 추가 / 수정 / 이미지 교체', command=self.manage).grid(row=4, column=0, padx=0, pady=12)
         ttk.Label(form, textvariable=self.button_summary).grid(row=4, column=1, sticky='w')
@@ -122,7 +127,7 @@ class App:
     def install_update(self):
         if not self.next_release or self.updating:
             return
-        if self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()) or (self.rule_manager and self.rule_manager.window.winfo_exists()) or (self.progress_manager and self.progress_manager.window.winfo_exists()):
+        if (self.notification_manager and self.notification_manager.window.winfo_exists()) or self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()) or (self.rule_manager and self.rule_manager.window.winfo_exists()) or (self.progress_manager and self.progress_manager.window.winfo_exists()):
             messagebox.showinfo('업데이트', '매크로를 중지하고 버튼 관리 창을 닫은 뒤 업데이트하세요.')
             return
         if not getattr(sys, 'frozen', False) or not (ROOT/'UpdateHelper.exe').is_file():
@@ -134,6 +139,7 @@ class App:
             self.registry.save(self.records)
             self.rule_store.save(self.rules, self.records)
             self.progress_store.save(self.progress, self.records)
+            self.notification_store.save(self.notifications,self.records)
             (ROOT/'last_settings.json').write_text(json.dumps({k: v.get() for k, v in self.fields.items()}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 저장 실패', str(e))
@@ -233,6 +239,24 @@ class App:
             return
         self.progress_manager=ProgressManager(self)
 
+    def manage_notifications(self):
+        if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
+            messagebox.showinfo('휴대폰 알림','실행을 중지한 뒤 설정하세요.')
+            return
+        from notification_ui import NotificationManager
+        if self.notification_manager and self.notification_manager.window.winfo_exists():
+            self.notification_manager.window.lift();return
+        self.notification_manager=NotificationManager(self)
+
+    def dispatch_notification(self,config,text):
+        def task():
+            try:
+                send_notification(config,text)
+                self.emit('휴대폰 알림 전송 성공')
+            except Exception:
+                self.emit('휴대폰 알림 전송 실패 · 인터넷과 알림 설정을 확인하세요. 자동 재전송하지 않습니다.')
+        threading.Thread(target=task,daemon=True).start()
+
     def start(self):
         if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
             return
@@ -246,15 +270,17 @@ class App:
             config['buttons'] = copy.deepcopy(self.records)
             config['rules'] = copy.deepcopy(self.rules)
             config['progress'] = copy.deepcopy(self.progress)
+            config['notifications'] = copy.deepcopy(self.notifications)
+            validate_notifications(self.notifications,self.records)
             validate_rules(self.rules, self.records)
             validate_progress(self.progress,self.records)
-            if not any(r['enabled'] and r.get('kind', 'normal') == 'normal' for r in self.records) and not any(r['enabled'] for r in self.rules) and not self.progress['enabled']:
+            if not any(r['enabled'] and r.get('kind', 'normal') == 'normal' for r in self.records) and not any(r['enabled'] for r in self.rules) and not self.progress['enabled'] and not self.notifications['enabled']:
                 raise ValueError('일반 클릭 버튼, 조건 규칙 또는 진행 보조 클릭을 하나 이상 켜세요.')
             config['dry'] = self.dry.get()
             if not self.confirm.get():
                 raise ValueError('게임 모드 설정 확인을 체크하세요.')
             import json
-            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules','progress')}, ensure_ascii=False, indent=2), encoding='utf-8')
+            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules','progress','notifications')}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 확인', str(e))
             return
@@ -271,12 +297,16 @@ class App:
             validate(cfg['buttons'])
             rules = cfg.get('rules', [])
             progress_config=cfg.get('progress',default_progress())
+            notification_config=cfg.get('notifications',default_notifications())
+            notifier=NotificationDetector(notification_config,cfg['buttons'])
             validate_rules(rules, cfg['buttons'])
             progress=ProgressClicker(progress_config,cfg['buttons'])
             referenced = {key for rule in rules if rule['enabled'] for key in
                           [rule['trigger'], rule['success']]+[s['button'] for s in rule['steps']] if key}
             if progress_config['enabled']:
                 referenced.update(progress_config['watch'])
+            if notification_config['enabled']:
+                referenced.update(notification_config['watch'])
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
                        (r.get('kind', 'normal') == 'normal' or r['id'] in referenced)}
             if not records:
@@ -311,6 +341,19 @@ class App:
                 if self.stop.is_set():
                     break
                 now = time.monotonic()
+                hits=notifier.observe({key:result[0] for key,result in results.items()})
+                if hits:
+                    names=', '.join(records[key]['name'] for key in hits)
+                    if cfg['dry']:
+                        self.emit(f'모의 휴대폰 알림 · {names} · 실제 전송 안 함')
+                    else:
+                        self.dispatch_notification(notification_config,notification_config['message']+'\n감지: '+names)
+                    if notification_config['stop']:
+                        self.emit('알림 이미지 감지 · 설정에 따라 클릭 전에 매크로 중지')
+                        break
+                if notification_config['enabled'] and notification_config['stop'] and any(results[key][0] for key in notification_config['watch']):
+                    self.stop.wait(interval)
+                    continue
                 action = machine.observe({n: r[0] for n, r in results.items()}, now)
                 while machine.events:
                     self.emit(machine.events.pop(0))
@@ -373,6 +416,9 @@ class App:
             except queue.Empty:
                 break
             if isinstance(msg, tuple):
+                if msg[0]=='notification_test':
+                    if not self.closing and msg[1].window.winfo_exists():msg[1].test_finished(msg[2])
+                    continue
                 if msg[0].startswith('update_'):
                     if not self.closing:
                         self.update_event(msg)
@@ -433,10 +479,11 @@ if __name__ == '__main__':
         app.manage_rules()
         app.rule_manager.edit(True)
         app.manage_progress()
+        app.manage_notifications()
         root.update()
         (ROOT/'logs'/'selftest.json').write_text(json.dumps({
             'frozen': bool(getattr(sys, 'frozen', False)), 'template_score': score,
-            'gui': 'ok', 'capture_editor': 'ok', 'point_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok', 'progress_manager': 'ok'}), encoding='utf-8')
+            'gui': 'ok', 'capture_editor': 'ok', 'point_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok', 'progress_manager': 'ok', 'notification_manager': 'ok'}), encoding='utf-8')
         root.destroy()
     else:
         root.mainloop()
