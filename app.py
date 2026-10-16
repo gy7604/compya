@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from adb import ADB
 from engine import Settings, SafetyStop
-from actions import ActionMachine
+from rules import RuleStore, WorkflowMachine, validate_rules
 from registry import Registry
 from version import VERSION
 
@@ -41,7 +41,10 @@ class App:
             saved = {}
         self.registry = Registry(ROOT)
         self.records = self.registry.load(saved)
+        self.rule_store = RuleStore(ROOT)
+        self.rules = self.rule_store.load(self.records)
         self.manager = None
+        self.rule_manager = None
         for row, (key, label, value) in enumerate(defaults):
             value = saved.get(key, value)
             if isinstance(value, (list, tuple)):
@@ -55,6 +58,7 @@ class App:
         self.button_summary = tk.StringVar(value=f'등록 {len(self.records)}개 / 사용 {sum(r["enabled"] for r in self.records)}개')
         ttk.Button(form, text='버튼 관리 · 추가 / 수정 / 이미지 교체', command=self.manage).grid(row=4, column=0, padx=0, pady=12)
         ttk.Label(form, textvariable=self.button_summary).grid(row=4, column=1, sticky='w')
+        ttk.Button(form, text='조건 규칙 관리', command=self.manage_rules).grid(row=4, column=2, padx=8)
         self.capturing = False
         self.dry = tk.BooleanVar(value=True)
         self.confirm = tk.BooleanVar(value=False)
@@ -106,7 +110,7 @@ class App:
     def install_update(self):
         if not self.next_release or self.updating:
             return
-        if self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()):
+        if self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()) or (self.rule_manager and self.rule_manager.window.winfo_exists()):
             messagebox.showinfo('업데이트', '매크로를 중지하고 버튼 관리 창을 닫은 뒤 업데이트하세요.')
             return
         if not getattr(sys, 'frozen', False) or not (ROOT/'UpdateHelper.exe').is_file():
@@ -116,6 +120,7 @@ class App:
             return
         try:
             self.registry.save(self.records)
+            self.rule_store.save(self.rules, self.records)
             (ROOT/'last_settings.json').write_text(json.dumps({k: v.get() for k, v in self.fields.items()}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 저장 실패', str(e))
@@ -191,6 +196,16 @@ class App:
         self.worker = threading.Thread(target=task, daemon=True)
         self.worker.start()
 
+    def manage_rules(self):
+        if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
+            messagebox.showinfo('조건 규칙', '실행을 중지한 뒤 규칙을 수정하세요.')
+            return
+        from rule_ui import RuleManager
+        if self.rule_manager and self.rule_manager.window.winfo_exists():
+            self.rule_manager.window.lift()
+            return
+        self.rule_manager = RuleManager(self)
+
     def emit(self, text):
         self.logger.info(text)
         self.events.put(text)
@@ -206,14 +221,16 @@ class App:
                 raise ValueError('목표 경기 수는 1~9999입니다.')
             import copy
             config['buttons'] = copy.deepcopy(self.records)
-            if not any(r['enabled'] for r in self.records):
-                raise ValueError('버튼 관리에서 사용할 버튼을 하나 이상 켜세요.')
+            config['rules'] = copy.deepcopy(self.rules)
+            validate_rules(self.rules, self.records)
+            if not any(r['enabled'] and r.get('kind', 'normal') == 'normal' for r in self.records) and not any(r['enabled'] for r in self.rules):
+                raise ValueError('일반 클릭 버튼 또는 조건 규칙을 하나 이상 켜세요.')
             config['dry'] = self.dry.get()
             Settings(recognition_timeout=config['wait'])
             if not self.confirm.get():
                 raise ValueError('게임 모드 설정 확인을 체크하세요.')
             import json
-            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k != 'buttons'}, ensure_ascii=False, indent=2), encoding='utf-8')
+            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules')}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 확인', str(e))
             return
@@ -228,7 +245,12 @@ class App:
             from vision import Matcher
             from registry import validate
             validate(cfg['buttons'])
-            records = {r['id']: r for r in cfg['buttons'] if r['enabled']}
+            rules = cfg.get('rules', [])
+            validate_rules(rules, cfg['buttons'])
+            referenced = {key for rule in rules if rule['enabled'] for key in
+                          [rule['trigger'], rule['success']]+[s['button'] for s in rule['steps']] if key}
+            records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
+                       (r.get('kind', 'normal') == 'normal' or r['id'] in referenced)}
             if not records:
                 raise ValueError('사용할 버튼이 없습니다.')
             matchers = {key: Matcher(self.registry.resolve(r['template']), r['threshold'], r['roi'])
@@ -236,8 +258,9 @@ class App:
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
             adb = ADB(cfg['adb'], cfg['serial'])
             adb.connect()
-            machine = ActionMachine(time.monotonic(), cfg['wait'], records)
+            machine = WorkflowMachine(records, rules, time.monotonic(), cfg['wait'])
             self.emit('시작 · ' + ('모의 실행' if cfg['dry'] else '실제 탭 전송'))
+            self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             dimensions = None
             previous_state = None
             heartbeat = taps = 0
@@ -252,6 +275,11 @@ class App:
                     break
                 now = time.monotonic()
                 action = machine.observe({n: r[0] for n, r in results.items()}, now)
+                while machine.events:
+                    self.emit(machine.events.pop(0))
+                if machine.finished:
+                    self.emit('규칙 완료 설정에 따라 매크로를 중지합니다.')
+                    break
                 if action:
                     if self.stop.is_set():
                         break
@@ -261,7 +289,7 @@ class App:
                     taps += 1
                     label = records[action]['name']
                     self.emit(f'{"모의 탭" if cfg["dry"] else "탭"} #{taps} {label} 좌표={point} 점수={score:.3f}')
-                state = f'{records[machine.pending]["name"]} 사라짐 대기' if machine.pending else '버튼 대기'
+                state = machine.status
                 if previous_state != state or now-heartbeat >= 5:
                     scores = ' / '.join(f'{records[n]["name"]}={r[2]:.3f}' for n, r in results.items())
                     self.emit(state + ' · ' + scores)
@@ -351,10 +379,12 @@ if __name__ == '__main__':
         editor(root, png, ROOT/'logs'/'unused.png', lambda *args: None)
         app.manage()
         app.manager.edit(True)
+        app.manage_rules()
+        app.rule_manager.edit(True)
         root.update()
         (ROOT/'logs'/'selftest.json').write_text(json.dumps({
             'frozen': bool(getattr(sys, 'frozen', False)), 'template_score': score,
-            'gui': 'ok', 'capture_editor': 'ok', 'button_manager': 'ok'}), encoding='utf-8')
+            'gui': 'ok', 'capture_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok'}), encoding='utf-8')
         root.destroy()
     else:
         root.mainloop()

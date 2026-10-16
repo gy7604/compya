@@ -8,6 +8,7 @@ releases/
 logs/
 .updates/
 buttons.json
+rules.json
 last_settings.json
 update_result.json
 assets/buttons/

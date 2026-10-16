@@ -14,11 +14,11 @@ class ButtonManager:
         self.store = app.registry
         self.window = tk.Toplevel(app.root)
         self.window.title('버튼 관리 · 추가 / 수정 / 이미지 교체')
-        self.window.geometry('850x460')
+        self.window.geometry('1060x500')
         self.window.transient(app.root)
         self.window.grab_set()
-        self.tree = ttk.Treeview(self.window, columns=('enabled', 'name', 'threshold', 'image'), show='headings')
-        for key, label, width in [('enabled', '사용', 55), ('name', '버튼 이름', 170),
+        self.tree = ttk.Treeview(self.window, columns=('priority', 'enabled', 'kind', 'name', 'threshold', 'image'), show='headings')
+        for key, label, width in [('priority', '우선', 45), ('enabled', '사용', 55), ('kind', '용도', 100), ('name', '버튼/이미지 이름', 170),
                                   ('threshold', '인식 기준', 80), ('image', '등록 이미지', 420)]:
             self.tree.heading(key, text=label)
             self.tree.column(key, width=width)
@@ -27,17 +27,19 @@ class ButtonManager:
         bar = ttk.Frame(self.window)
         bar.pack(fill='x', padx=10)
         for label, fn in [('버튼 추가', lambda: self.edit(True)), ('선택 수정 / 재캡처', self.edit),
-                          ('사용 / 해제', self.toggle), ('선택 삭제', self.delete)]:
+                          ('사용 / 해제', self.toggle), ('위로 ↑', lambda: self.move(-1)),
+                          ('아래로 ↓', lambda: self.move(1)), ('선택 삭제', self.delete)]:
             ttk.Button(bar, text=label, command=fn).pack(side='left', padx=3)
-        ttk.Label(self.window, text='등록한 버튼이 보이면 중앙을 한 번 누릅니다. 실행 순서를 지정하는 기능은 아닙니다.').pack(pady=8)
+        ttk.Label(self.window, text='동시에 보이는 일반 클릭 버튼은 위에 있는 것부터 처리합니다. 감지 전용 이미지는 클릭하지 않습니다.').pack(pady=8)
         ttk.Button(self.window, text='닫기', command=self.window.destroy).pack(pady=5)
         self.refresh()
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
-        for r in self.app.records:
+        kinds = {'normal': '일반 클릭', 'condition': '감지 전용', 'step': '규칙 전용 클릭'}
+        for index, r in enumerate(self.app.records, 1):
             self.tree.insert('', 'end', iid=r['id'], values=(
-                'ON' if r['enabled'] else 'OFF', r['name'], r['threshold'], r['template'] or '미등록'))
+                index, 'ON' if r['enabled'] else 'OFF', kinds[r.get('kind', 'normal')], r['name'], r['threshold'], r['template'] or '미등록'))
         self.app.button_summary.set(f'등록 {len(self.app.records)}개 / 사용 {sum(r["enabled"] for r in self.app.records)}개')
 
     def selected(self):
@@ -60,6 +62,23 @@ class ButtonManager:
         next(x for x in records if x['id'] == r['id'])['enabled'] = not r['enabled']
         try:
             self.commit(records)
+        except Exception as e:
+            messagebox.showerror('저장 실패', str(e), parent=self.window)
+
+    def move(self, offset):
+        r = self.selected()
+        if r is None:
+            return
+        records = copy.deepcopy(self.app.records)
+        index = next(i for i, item in enumerate(records) if item['id'] == r['id'])
+        target = index+offset
+        if not 0 <= target < len(records):
+            return
+        records[index], records[target] = records[target], records[index]
+        try:
+            self.commit(records)
+            self.tree.selection_set(r['id'])
+            self.tree.see(r['id'])
         except Exception as e:
             messagebox.showerror('저장 실패', str(e), parent=self.window)
 
@@ -96,7 +115,10 @@ class ButtonManager:
             ttk.Label(win, text=label).grid(row=row, column=0, padx=10, pady=5, sticky='w')
             ttk.Entry(win, textvariable=values[key], width=48).grid(row=row, column=1, columnspan=2, padx=10)
         enabled = tk.BooleanVar(value=draft['enabled'])
-        ttk.Checkbutton(win, text='이 버튼 사용', variable=enabled).grid(row=5, column=0, sticky='w', padx=10)
+        ttk.Checkbutton(win, text='이 이미지 사용', variable=enabled).grid(row=5, column=0, sticky='w', padx=10)
+        kind_labels = {'normal': '일반 클릭', 'condition': '감지 전용 (클릭 안 함)', 'step': '규칙 전용 클릭'}
+        kind = tk.StringVar(value=kind_labels[draft.get('kind', 'normal')])
+        ttk.Combobox(win, textvariable=kind, values=list(kind_labels.values()), state='readonly', width=35).grid(row=5, column=1, columnspan=2)
         image_label = tk.StringVar(value=draft['template'] or '이미지 미등록')
         ttk.Label(win, textvariable=image_label, wraplength=520).grid(row=6, column=0, columnspan=3, padx=10, pady=8)
 
@@ -180,6 +202,7 @@ class ButtonManager:
                 for key in ('threshold', 'cooldown', 'disappear_timeout'):
                     draft[key] = float(values[key].get())
                 draft['enabled'] = enabled.get()
+                draft['kind'] = next(key for key, label in kind_labels.items() if label == kind.get())
                 draft['roi'] = [int(x) for x in values['roi'].get().split(',')] if values['roi'].get().strip() else None
                 records = copy.deepcopy(self.app.records)
                 if adding:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 def new_button(name='새 버튼'):
     return dict(id=uuid.uuid4().hex, name=name, enabled=False, template='',
-                roi=None, size=None, threshold=.90, cooldown=2., disappear_timeout=8.)
+                roi=None, size=None, threshold=.90, cooldown=2., disappear_timeout=8., kind='normal')
 
 
 def validate(records):
@@ -19,6 +19,8 @@ def validate(records):
         if r['id'] in ids:
             raise ValueError('중복된 버튼 ID입니다.')
         ids.add(r['id'])
+        if r.get('kind', 'normal') not in ('normal', 'condition', 'step'):
+            raise ValueError('이미지 용도가 올바르지 않습니다.')
         if not isinstance(r['enabled'], bool):
             raise ValueError('사용 여부가 올바르지 않습니다.')
         if not .5 <= float(r['threshold']) <= 1:
