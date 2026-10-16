@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 import zipfile
-from updates import check_latest, stage_update, extract_package, version_tuple, UPDATE_ASSET
+from updates import check_latest, stage_update, extract_package, version_tuple, UPDATE_ASSET, filesystem_path, VERSION
 from updater import replace_runtime
 from package_release import build_archive
 
@@ -17,7 +17,7 @@ class Response(io.BytesIO):
         return 'https://release-assets.githubusercontent.com/test'
 
 
-def release(tag='v1.0.1'):
+def release(tag='v9.0.0'):
     return dict(tag_name=tag, assets=[dict(name=UPDATE_ASSET, size=100,
         digest='sha256:'+'a'*64,
         browser_download_url=f'https://github.com/gy7604/compya/releases/download/{tag}/{UPDATE_ASSET}')])
@@ -52,10 +52,27 @@ class UpdateTests(unittest.TestCase):
 
     def test_newer_release(self):
         result = check_latest(lambda *a, **k: Response(json.dumps(release()).encode()))
-        self.assertEqual(result['tag'], 'v1.0.1')
+        self.assertEqual(result['tag'], 'v9.0.0')
 
     def test_current_or_older_release(self):
-        self.assertIsNone(check_latest(lambda *a, **k: Response(json.dumps(release('v1.0.0')).encode())))
+        self.assertIsNone(check_latest(lambda *a, **k: Response(json.dumps(release('v'+VERSION)).encode())))
+
+    def test_deep_windows_extraction(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            zip_path = Path(folder)/'update.zip'
+            name = 'V26Macro/_internal/licenses/' + '/'.join(['long_license_directory']*10) + '/LICENSE'
+            zip_path.write_bytes(archive_bytes({name: b'license text'}))
+            extract_package(zip_path, Path(folder)/'extracted')
+            deep = filesystem_path(Path(folder)/'extracted'/name)
+            self.assertEqual(deep.read_bytes(), b'license text')
+            # Remove with the same extended path before TemporaryDirectory cleanup.
+            for _ in range(11):
+                parent = deep.parent
+                if deep.is_file():
+                    deep.unlink()
+                elif deep.is_dir():
+                    deep.rmdir()
+                deep = parent
 
     def test_no_published_release(self):
         def opener(*a, **kw):

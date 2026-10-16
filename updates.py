@@ -1,6 +1,7 @@
 """Public GitHub release checks and verified staging; no credentials required."""
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -17,6 +18,14 @@ from version import VERSION, REPOSITORY, UPDATE_ASSET
 
 MAX_DOWNLOAD = 600 * 1024 * 1024
 MAX_EXTRACTED = 1500 * 1024 * 1024
+
+
+def filesystem_path(path):
+    """Use extended Windows paths for staged license/runtime files > MAX_PATH."""
+    value = str(Path(path).absolute())
+    if os.name == 'nt' and not value.startswith('\\\\?\\'):
+        value = ('\\\\?\\UNC\\' + value[2:]) if value.startswith('\\\\') else ('\\\\?\\' + value)
+    return Path(value)
 
 
 def version_tuple(value):
@@ -97,8 +106,9 @@ def extract_package(archive, destination):
             target = destination.joinpath(*PurePosixPath(info.filename).parts)
             if not target.resolve().is_relative_to(destination.resolve()):
                 raise ValueError('업데이트 경로가 범위를 벗어났습니다.')
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with z.open(info) as source, target.open('wb') as output:
+            output_path = filesystem_path(target)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with z.open(info) as source, output_path.open('wb') as output:
                 shutil.copyfileobj(source, output)
     package = destination/'V26Macro'
     for name in ('V26Macro.exe', 'UpdateHelper.exe'):
