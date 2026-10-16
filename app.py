@@ -326,12 +326,12 @@ class App:
             if notification_config['enabled']:
                 referenced.update(notification_config['watch'])
             if ranking_config['enabled']:
-                referenced.update(ranking_config[key] for key in ('lobby','refresh','paid','series','disabled','proceed','result','confirm') if ranking_config[key])
+                referenced.update(ranking_config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm') if ranking_config[key])
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
                        (r.get('kind', 'normal') == 'normal' or r['id'] in referenced)}
             if not records:
                 raise ValueError('사용할 버튼이 없습니다.')
-            color_keys={ranking_config[key] for key in ('series','disabled','refresh','paid') if ranking_config.get(key)} if ranking_config['enabled'] else set()
+            color_keys={ranking_config[key] for key in ('series','disabled','refresh','points','paid') if ranking_config.get(key)} if ranking_config['enabled'] else set()
             matchers = {key: Matcher(self.registry.resolve(r['template']), r['threshold'], r['roi'], **({'color_tolerance':25} if key in color_keys else {}))
                         for key, r in records.items()}
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
@@ -345,7 +345,7 @@ class App:
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             if progress_config['enabled']:
                 self.emit(f'진행 보조 클릭 ON · 두 이미지 미인식 {float(progress_config["delay"]):g}초 후 / {float(progress_config["interval"]):g}초 간격 / 좌표={tuple(progress_config["point"])}')
-            if ranking_config['enabled']:self.emit(f'랭킹 모드 · 목표 연속 경기 {ranking.target}회 · 연속 경기 우선 · 비활성 확인 시 무료 갱신만 사용 · 별 재화 갱신 건너뜀')
+            if ranking_config['enabled']:self.emit(f'랭킹 모드 · 목표 연속 경기 {ranking.target}회 · 연속 경기 우선 · 비활성 확인 시 무료/일반 포인트 갱신 사용 · 별 재화 갱신 건너뜀')
             dimensions = None
             previous_state = None
             heartbeat = taps = 0

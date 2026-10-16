@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def default_ranking():
-    return dict(enabled=False,lobby='',refresh='',paid='',series='',disabled='',proceed='',result='',confirm='')
+    return dict(enabled=False,lobby='',refresh='',points='',paid='',series='',disabled='',proceed='',result='',confirm='')
 
 
 def validate_ranking(config,records):
@@ -12,9 +12,11 @@ def validate_ranking(config,records):
     available={r['id']:r for r in records if r['enabled'] and r['template']}
     if any(not config.get(key) for key in ('lobby','refresh','series','disabled','proceed','result','confirm')):
         raise ValueError('랭킹 로비, 무료 갱신, 연속 경기 활성·비활성, 경기 진행, 결과 제목·확인 이미지를 선택하세요.')
-    keys=[config[key] for key in ('lobby','refresh','paid','series','disabled','proceed','result','confirm') if config.get(key)]
+    keys=[config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm') if config.get(key)]
     if len(keys)!=len(set(keys)) or any(key not in available for key in keys):
         raise ValueError('랭킹 이미지는 서로 다르게 선택하고 버튼 관리에서 사용을 켜세요.')
+    if config.get('points') and not available[config['points']].get('roi'):
+        raise ValueError('포인트 갱신은 갱신 버튼 안의 P 아이콘만 캡처하고 검색 영역을 해당 버튼 주변으로 지정하세요.')
     if any(available[key].get('kind','normal')=='normal' for key in keys):
         raise ValueError('랭킹 전용 이미지는 감지 전용 또는 규칙 전용으로 등록하세요. 일반 클릭과 중복하지 않습니다.')
 
@@ -42,8 +44,8 @@ class RankingMachine:
         self.hold=False
         if not self.config['enabled']:return None
         if self.finished:self.hold=True;return None
-        lobby_key,refresh,paid,series,disabled,proceed,result,confirm=(self.config[key] for key in ('lobby','refresh','paid','series','disabled','proceed','result','confirm'))
-        for key in (lobby_key,refresh,paid,series,disabled,proceed,result,confirm):
+        lobby_key,refresh,points,paid,series,disabled,proceed,result,confirm=(self.config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm'))
+        for key in (lobby_key,refresh,points,paid,series,disabled,proceed,result,confirm):
             if key:self.counts[key]=self.counts.get(key,0)+1 if found.get(key,False) else 0
         lobby=found.get(lobby_key,False)
         if self.phase=='playing':
@@ -76,6 +78,8 @@ class RankingMachine:
                 elif self.stable(disabled,found):
                     if self.stable(refresh,found) and not found.get(paid,False):
                         key=refresh;self.phase='series';self.events.append('랭킹 연속 경기 비활성 확인 · 무료 갱신 1회')
+                    elif self.stable(points,found) and not found.get(paid,False):
+                        key=points;self.phase='series';self.events.append('랭킹 연속 경기 비활성 확인 · 일반 포인트 갱신 1회 (금액 숫자 미사용)')
         elif self.phase=='series' and self.stable(series,found):key=series;self.phase='lineup'
         elif self.phase=='lineup' and self.stable(proceed,found):key=proceed;self.phase='departing';self.absent=0
         if key:

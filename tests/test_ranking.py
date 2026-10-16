@@ -7,11 +7,11 @@ from app import App
 from registry import new_button
 from ranking import *
 
-KEYS=['lobby','refresh','paid','series','disabled','proceed','result','confirm']
+KEYS=['lobby','refresh','points','paid','series','disabled','proceed','result','confirm']
 def fixture():
     records=[]
     for i,key in enumerate(KEYS):
-        r=new_button(key);r.update(id=key,enabled=True,kind='condition',template=key+'.png',click_mode='fixed',click_point=[10+i,20],click_size=[720,1280]);records.append(r)
+        r=new_button(key);r.update(id=key,enabled=True,kind='condition',template=key+'.png',roi=[0,0,720,1280],click_mode='fixed',click_point=[10+i,20],click_size=[720,1280]);records.append(r)
     config=dict(enabled=True,**{key:key for key in KEYS})
     return records,config
 
@@ -92,9 +92,26 @@ class RankingTests(unittest.TestCase):
         return app,adb
     def test_runner_stops_at_target_and_only_taps_series_and_proceed(self):
         app,adb=self.runner(False)
-        self.assertEqual([c.args[0] for c in adb.tap.call_args_list],[(13,20),(15,20)])
+        self.assertEqual([c.args[0] for c in adb.tap.call_args_list],[(14,20),(16,20)])
         self.assertTrue(any('목표 횟수 완료' in c.args[0] for c in app.emit.call_args_list))
         self.assertFalse(any('안전 중지' in c.args[0] for c in app.emit.call_args_list))
     def test_dry_run_never_taps(self):
         app,adb=self.runner(True);adb.tap.assert_not_called()
         self.assertTrue(any('모의 랭킹 탭' in c.args[0] for c in app.emit.call_args_list))
+
+    def test_points_refresh_only_after_disabled_and_never_when_star_visible(self):
+        m=self.machine()
+        self.assertEqual(self.frames(m,visible('lobby','series','points'),0),[None,None,'series'])
+        m=self.machine()
+        for t in range(3):self.assertIsNone(m.observe(visible('lobby','points'),t))
+        self.assertEqual(self.frames(m,visible('lobby','disabled','points'),3),[None,None,'points'])
+        m=self.machine()
+        for t in range(6):self.assertIsNone(m.observe(visible('lobby','disabled','points','paid'),t))
+    def test_free_refresh_precedes_points_and_points_can_be_disabled(self):
+        m=self.machine()
+        self.assertEqual(self.frames(m,visible('lobby','disabled','refresh','points'),0),[None,None,'refresh'])
+        records,cfg=fixture();cfg['points']='';m=RankingMachine(cfg,records,1)
+        for t in range(6):self.assertIsNone(m.observe(visible('lobby','disabled','points'),t))
+    def test_points_template_requires_search_area(self):
+        records,cfg=fixture();next(r for r in records if r['id']=='points')['roi']=None
+        with self.assertRaises(ValueError):validate_ranking(cfg,records)
