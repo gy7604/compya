@@ -67,11 +67,10 @@ class RuleStore:
 
 
 class WorkflowMachine:
-    def __init__(self, records, rules, now, timeout=180, detection_frames=3):
+    def __init__(self, records, rules, now, timeout=None, detection_frames=3):
         validate_rules(rules, list(records.values()))
         self.records = records
         self.rules = [r for r in rules if r['enabled']]
-        self.timeout = timeout
         self.detection_frames = detection_frames
         self.normal_ids = [key for key, r in records.items() if r.get('kind', 'normal') == 'normal']
         self.normal = self.new_normal(now)
@@ -92,7 +91,7 @@ class WorkflowMachine:
         self.success_armed = False
 
     def new_normal(self, now):
-        return ActionMachine(now, self.timeout, self.records, self.normal_ids, self.detection_frames)
+        return ActionMachine(now, policies=self.records, priority_order=self.normal_ids, detection_frames=self.detection_frames)
 
     @property
     def pending(self):
@@ -140,8 +139,6 @@ class WorkflowMachine:
             return None
         # A stable condition takes precedence over issuing further normal taps.
         if ready and self.normal.pending is None:
-            if now-self.normal.since >= self.timeout:
-                raise SafetyStop('조건 규칙 시작 대기 시간 초과')
             return None
         return self.normal.observe({key: present.get(key, False) for key in self.normal_ids}, now)
 

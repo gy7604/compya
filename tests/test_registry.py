@@ -3,7 +3,6 @@ import unittest
 from pathlib import Path
 from registry import Registry, new_button, validate
 from actions import ActionMachine
-from engine import SafetyStop
 
 
 class RegistryTests(unittest.TestCase):
@@ -54,12 +53,12 @@ class RegistryTests(unittest.TestCase):
                 r.update(changes)
                 validate([r])
 
-    def test_per_button_safety_timeout(self):
+    def test_per_button_timeout_does_not_stop_normal_clicks(self):
         m = ActionMachine(0, policies={'x': {'disappear_timeout': 2, 'cooldown': 4}})
         for t in [0, .2, .4]:
             m.observe({'x': True}, t)
-        with self.assertRaises(SafetyStop):
-            m.observe({'x': True}, 2.4)
+        self.assertIsNone(m.observe({'x': True}, 2.4))
+        self.assertIsNone(m.observe({'x': True}, 86400))
 
     def test_per_button_cooldown_blocks_next_button(self):
         m = ActionMachine(0, policies={'x': {'cooldown': 4}})

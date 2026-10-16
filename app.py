@@ -9,7 +9,7 @@ import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from adb import ADB
-from engine import Settings, SafetyStop
+from engine import SafetyStop
 from rules import RuleStore, WorkflowMachine, validate_rules
 from registry import Registry
 from version import VERSION
@@ -35,7 +35,7 @@ class App:
         form = ttk.Frame(root, padding=12)
         form.pack(fill='x')
         defaults = [('adb', 'ADB 실행 파일', 'adb'), ('serial', '장치 주소 / serial', '127.0.0.1:5555'),
-                    ('wait', '인식 대기 제한(초)', '180'), ('games', '랭킹 챌린지 목표 경기 수 (준비만)', '1')]
+                    ('games', '랭킹 챌린지 목표 경기 수 (준비만)', '1')]
         try:
             saved = json.loads((ROOT/'last_settings.json').read_text(encoding='utf-8'))
         except (OSError, ValueError):
@@ -60,6 +60,7 @@ class App:
         self.fields['speed'] = tk.StringVar(value=mode if mode in MODES else DEFAULT_MODE)
         ttk.Label(form, text='인식 반응속도').grid(row=0, column=2, padx=8)
         ttk.Combobox(form, textvariable=self.fields['speed'], values=list(MODES), state='readonly', width=22).grid(row=1, column=2, padx=8)
+        ttk.Label(form, text='일반 버튼: 나타남 / 사라짐 대기 시간 제한 없음').grid(row=3, column=0, columnspan=3, sticky='w')
         self.button_summary = tk.StringVar(value=f'등록 {len(self.records)}개 / 사용 {sum(r["enabled"] for r in self.records)}개')
         ttk.Button(form, text='버튼 관리 · 추가 / 수정 / 이미지 교체', command=self.manage).grid(row=4, column=0, padx=0, pady=12)
         ttk.Label(form, textvariable=self.button_summary).grid(row=4, column=1, sticky='w')
@@ -220,7 +221,6 @@ class App:
             return
         try:
             config = {k: v.get() for k, v in self.fields.items()}
-            config['wait'] = float(config['wait'])
             config['games'] = int(config['games'])
             speed_settings(config['speed'])
             if not 1 <= config['games'] <= 9999:
@@ -232,7 +232,6 @@ class App:
             if not any(r['enabled'] and r.get('kind', 'normal') == 'normal' for r in self.records) and not any(r['enabled'] for r in self.rules):
                 raise ValueError('일반 클릭 버튼 또는 조건 규칙을 하나 이상 켜세요.')
             config['dry'] = self.dry.get()
-            Settings(recognition_timeout=config['wait'])
             if not self.confirm.get():
                 raise ValueError('게임 모드 설정 확인을 체크하세요.')
             import json
@@ -265,8 +264,9 @@ class App:
             adb = ADB(cfg['adb'], cfg['serial'])
             adb.connect()
             frames, interval = speed_settings(cfg.get('speed', DEFAULT_MODE))
-            machine = WorkflowMachine(records, rules, time.monotonic(), cfg['wait'], frames)
+            machine = WorkflowMachine(records, rules, time.monotonic(), detection_frames=frames)
             self.emit('시작 · ' + ('모의 실행' if cfg['dry'] else '실제 탭 전송'))
+            self.emit('일반 버튼 나타남 / 사라짐 대기는 시간 제한 없이 계속합니다.')
             self.emit(f'반응속도 · 인식 {frames}회 / 추가 화면 대기 {interval:g}초 / 전환 확인 3회 유지')
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             dimensions = None

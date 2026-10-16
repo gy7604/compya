@@ -24,6 +24,30 @@ def fixtures():
 
 
 class RuleTests(unittest.TestCase):
+    def test_normal_no_image_can_wait_for_a_day(self):
+        records,_=fixtures()
+        m=WorkflowMachine(records,[],0,timeout=1)
+        for t in [1,180,3600,86400]:self.assertIsNone(m.observe({},t))
+        for t in [86401,86402]:self.assertIsNone(m.observe({'normal':True},t))
+        self.assertEqual(m.observe({'normal':True},86403),'normal')
+
+    def test_normal_visible_button_and_queued_rule_can_wait_indefinitely(self):
+        records,rule=fixtures()
+        m=WorkflowMachine(records,[rule],0,timeout=1)
+        for t in [0,.25,.5]:m.observe({'normal':True},t)
+        for t in [1,1.25,1.5]:m.observe({'normal':True,'goal':True},t)
+        self.assertIsNotNone(m.queued)
+        self.assertIsNone(m.observe({'normal':True},86400))
+        for t in [86401,86402,86403,86404]:m.observe({},t)
+        self.assertIsNotNone(m.active)
+
+    def test_rule_step_disappearance_timeout_is_still_enforced(self):
+        records,rule=fixtures()
+        rule.update(steps=[{'button':'pause','verify':'disappear'}],success='')
+        m=WorkflowMachine(records,[rule],0)
+        for t in range(6):m.observe({'goal':True,'pause':True},t)
+        with self.assertRaises(SafetyStop):m.observe({'pause':True},13)
+
     def runner(self, dry):
         records,rule=fixtures()
         app=App.__new__(App)

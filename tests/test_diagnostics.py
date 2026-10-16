@@ -4,26 +4,24 @@ import tempfile
 import unittest
 from actions import ActionMachine
 from diagnostics import write_stop_snapshot
-from engine import SafetyStop
 
 
 class DiagnosticsTests(unittest.TestCase):
-    def test_timeout_identifies_button_by_name_not_id(self):
+    def test_long_visible_button_waits_until_it_disappears(self):
         identity = '718085c152ed4cf7af18130f4d16a6a0'
         m = ActionMachine(0, policies={identity: {'name': 'PLAY BALL'}})
         for t in [0, .25, .5]:
             m.observe({identity: True}, t)
-        with self.assertRaises(SafetyStop) as error:
-            m.observe({identity: True}, 8.5)
-        self.assertIn('PLAY BALL', str(error.exception))
-        self.assertIn('8초', str(error.exception))
-        self.assertNotIn(identity, str(error.exception))
+        self.assertIsNone(m.observe({identity: True},86400))
+        for t in [86401,86402,86403]:m.observe({identity:False},t)
+        for t in [86404,86405]:self.assertIsNone(m.observe({identity:True},t))
+        self.assertEqual(m.observe({identity:True},86406),identity)
 
-    def test_unrecognized_screen_is_a_separate_message(self):
+    def test_no_button_waits_indefinitely_then_detects_a_button(self):
         m = ActionMachine(0, timeout=10)
-        with self.assertRaises(SafetyStop) as error:
-            m.observe({}, 10)
-        self.assertIn('버튼을 찾지 못했습니다', str(error.exception))
+        for t in [10,180,3600,86400]:self.assertIsNone(m.observe({},t))
+        for t in [86401,86402]:self.assertIsNone(m.observe({'x':True},t))
+        self.assertEqual(m.observe({'x':True},86403),'x')
 
     def test_snapshot_and_context_are_local_and_overwritten(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:

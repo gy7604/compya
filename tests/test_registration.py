@@ -5,7 +5,6 @@ import cv2
 import numpy as np
 from actions import ActionMachine
 from capture import selection_box, save_region
-from engine import SafetyStop
 from vision import Matcher
 
 
@@ -45,11 +44,12 @@ class RegistrationTests(unittest.TestCase):
         for t in range(10):
             self.assertIsNone(m.observe({'a': True, 'b': True}, t))
 
-    def test_pending_action_blocks_other_and_times_out(self):
+    def test_pending_action_blocks_other_indefinitely(self):
         m = ActionMachine(0)
         for t in [0, .25, .5]:
             m.observe({'a': True, 'b': False}, t)
         for t in [1, 2, 3]:
             self.assertIsNone(m.observe({'a': True, 'b': True}, t))
-        with self.assertRaises(SafetyStop):
-            m.observe({'a': True}, 8.5)
+        for t in [8.5, 180, 3600, 86400]:
+            self.assertIsNone(m.observe({'a': True,'b': True},t))
+        self.assertEqual(m.pending,'a')
