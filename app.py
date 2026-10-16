@@ -15,6 +15,7 @@ from registry import Registry
 from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
+from ranking import RankingStore, RankingMachine, default_ranking, validate_ranking
 from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
 from progress import ProgressStore, ProgressClicker, default_progress, validate_progress
 
@@ -38,7 +39,7 @@ class App:
         form = ttk.Frame(root, padding=12)
         form.pack(fill='x')
         defaults = [('adb', 'ADB 실행 파일', 'adb'), ('serial', '장치 주소 / serial', '127.0.0.1:5555'),
-                    ('games', '랭킹 챌린지 목표 경기 수 (준비만)', '1')]
+                    ('games', '랭킹 챌린지 목표 연속 경기 횟수', '1')]
         try:
             saved = json.loads((ROOT/'last_settings.json').read_text(encoding='utf-8'))
         except (OSError, ValueError):
@@ -52,6 +53,9 @@ class App:
         self.notification_store = NotificationStore(ROOT)
         self.notifications = self.notification_store.load()
         self.notification_manager = None
+        self.ranking_store=RankingStore(ROOT)
+        self.ranking=self.ranking_store.load()
+        self.ranking_manager=None
         self.manager = None
         self.rule_manager = None
         self.progress_manager = None
@@ -81,7 +85,8 @@ class App:
         self.confirm = tk.BooleanVar(value=False)
         ttk.Checkbutton(form, text='모의 실행 (탭 전송 안 함)', variable=self.dry).grid(row=5, column=0, columnspan=2, sticky='w')
         ttk.Checkbutton(form, text='게임에서 타격 OFF · 투구 ON · 풀 플레이를 직접 설정했습니다.', variable=self.confirm).grid(row=6, column=0, columnspan=3, sticky='w')
-        ttk.Label(form, text='랭킹 진입·경기 수 집계·결과 화면 처리는 미구현입니다. 목표 값은 저장만 합니다.').grid(row=7, column=0, columnspan=3, sticky='w')
+        ttk.Label(form,text='랭킹: 연속 경기 결과 화면을 1회로 집계 · 시작마다 0회로 초기화').grid(row=7,column=0,columnspan=2,sticky='w')
+        ttk.Button(form,text='랭킹 챌린지 설정',command=self.manage_ranking).grid(row=7,column=2,padx=8)
         update_bar = ttk.Frame(root)
         update_bar.pack(fill='x', padx=12, pady=5)
         self.update_status = tk.StringVar(value=f'현재 v{VERSION} · 시작 시 업데이트 확인')
@@ -127,7 +132,7 @@ class App:
     def install_update(self):
         if not self.next_release or self.updating:
             return
-        if (self.notification_manager and self.notification_manager.window.winfo_exists()) or self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()) or (self.rule_manager and self.rule_manager.window.winfo_exists()) or (self.progress_manager and self.progress_manager.window.winfo_exists()):
+        if (self.ranking_manager and self.ranking_manager.window.winfo_exists()) or (self.notification_manager and self.notification_manager.window.winfo_exists()) or self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()) or (self.rule_manager and self.rule_manager.window.winfo_exists()) or (self.progress_manager and self.progress_manager.window.winfo_exists()):
             messagebox.showinfo('업데이트', '매크로를 중지하고 버튼 관리 창을 닫은 뒤 업데이트하세요.')
             return
         if not getattr(sys, 'frozen', False) or not (ROOT/'UpdateHelper.exe').is_file():
@@ -140,6 +145,7 @@ class App:
             self.rule_store.save(self.rules, self.records)
             self.progress_store.save(self.progress, self.records)
             self.notification_store.save(self.notifications,self.records)
+            self.ranking_store.save(self.ranking,self.records)
             (ROOT/'last_settings.json').write_text(json.dumps({k: v.get() for k, v in self.fields.items()}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 저장 실패', str(e))
@@ -239,6 +245,14 @@ class App:
             return
         self.progress_manager=ProgressManager(self)
 
+    def manage_ranking(self):
+        if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
+            messagebox.showinfo('랭킹 챌린지','실행을 중지한 뒤 설정하세요.');return
+        from ranking_ui import RankingManager
+        if self.ranking_manager and self.ranking_manager.window.winfo_exists():
+            self.ranking_manager.window.lift();return
+        self.ranking_manager=RankingManager(self)
+
     def manage_notifications(self):
         if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
             messagebox.showinfo('휴대폰 알림','실행을 중지한 뒤 설정하세요.')
@@ -265,22 +279,24 @@ class App:
             config['games'] = int(config['games'])
             speed_settings(config['speed'])
             if not 1 <= config['games'] <= 9999:
-                raise ValueError('목표 경기 수는 1~9999입니다.')
+                raise ValueError('목표 연속 경기 횟수는 1~9999입니다.')
             import copy
             config['buttons'] = copy.deepcopy(self.records)
             config['rules'] = copy.deepcopy(self.rules)
             config['progress'] = copy.deepcopy(self.progress)
             config['notifications'] = copy.deepcopy(self.notifications)
+            config['ranking']=copy.deepcopy(self.ranking)
+            validate_ranking(self.ranking,self.records)
             validate_notifications(self.notifications,self.records)
             validate_rules(self.rules, self.records)
             validate_progress(self.progress,self.records)
-            if not any(r['enabled'] and r.get('kind', 'normal') == 'normal' for r in self.records) and not any(r['enabled'] for r in self.rules) and not self.progress['enabled'] and not self.notifications['enabled']:
+            if not any(r['enabled'] and r.get('kind', 'normal') == 'normal' for r in self.records) and not any(r['enabled'] for r in self.rules) and not self.progress['enabled'] and not self.notifications['enabled'] and not self.ranking['enabled']:
                 raise ValueError('일반 클릭 버튼, 조건 규칙 또는 진행 보조 클릭을 하나 이상 켜세요.')
             config['dry'] = self.dry.get()
             if not self.confirm.get():
                 raise ValueError('게임 모드 설정 확인을 체크하세요.')
             import json
-            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules','progress','notifications')}, ensure_ascii=False, indent=2), encoding='utf-8')
+            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules','progress','notifications','ranking')}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 확인', str(e))
             return
@@ -299,6 +315,8 @@ class App:
             progress_config=cfg.get('progress',default_progress())
             notification_config=cfg.get('notifications',default_notifications())
             notifier=NotificationDetector(notification_config,cfg['buttons'])
+            ranking_config=cfg.get('ranking',default_ranking())
+            ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
             validate_rules(rules, cfg['buttons'])
             progress=ProgressClicker(progress_config,cfg['buttons'])
             referenced = {key for rule in rules if rule['enabled'] for key in
@@ -307,11 +325,14 @@ class App:
                 referenced.update(progress_config['watch'])
             if notification_config['enabled']:
                 referenced.update(notification_config['watch'])
+            if ranking_config['enabled']:
+                referenced.update(ranking_config[key] for key in ('lobby','refresh','paid','series','disabled','proceed','result','confirm') if ranking_config[key])
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
                        (r.get('kind', 'normal') == 'normal' or r['id'] in referenced)}
             if not records:
                 raise ValueError('사용할 버튼이 없습니다.')
-            matchers = {key: Matcher(self.registry.resolve(r['template']), r['threshold'], r['roi'])
+            color_keys={ranking_config[key] for key in ('series','disabled','refresh','paid') if ranking_config.get(key)} if ranking_config['enabled'] else set()
+            matchers = {key: Matcher(self.registry.resolve(r['template']), r['threshold'], r['roi'], **({'color_tolerance':25} if key in color_keys else {}))
                         for key, r in records.items()}
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
             adb = ADB(cfg['adb'], cfg['serial'])
@@ -324,6 +345,7 @@ class App:
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             if progress_config['enabled']:
                 self.emit(f'진행 보조 클릭 ON · 두 이미지 미인식 {float(progress_config["delay"]):g}초 후 / {float(progress_config["interval"]):g}초 간격 / 좌표={tuple(progress_config["point"])}')
+            if ranking_config['enabled']:self.emit(f'랭킹 모드 · 목표 연속 경기 {ranking.target}회 · 연속 경기 우선 · 비활성 확인 시 무료 갱신만 사용 · 별 재화 갱신 건너뜀')
             dimensions = None
             previous_state = None
             heartbeat = taps = 0
@@ -354,6 +376,25 @@ class App:
                 if notification_config['enabled'] and notification_config['stop'] and any(results[key][0] for key in notification_config['watch']):
                     self.stop.wait(interval)
                     continue
+                ranking_action=ranking.observe({key:result[0] for key,result in results.items()},now)
+                while ranking.events:self.emit(ranking.events.pop(0))
+                if ranking.finished:
+                    self.emit('랭킹 목표 횟수 완료 · 결과 화면에서 다음 연속 경기 시작 전에 중지');break
+                if ranking.hold:
+                    if ranking_action:
+                        if self.stop.is_set():break
+                        _,matched_point,score,_=results[ranking_action]
+                        point=click_point(records[ranking_action],matched_point,size)
+                        if not cfg['dry']:adb.tap(point)
+                        self.emit(f'{"모의 랭킹 탭" if cfg["dry"] else "랭킹 탭"} {records[ranking_action]["name"]} 좌표={point} 점수={score:.3f}')
+                        if ranking_action==ranking_config['proceed']:
+                            machine=WorkflowMachine(records,rules,now,detection_frames=frames)
+                    if now-heartbeat>=5:
+                        labels={'lobby':'무료/별 갱신 상태 확인','series':'연속 경기 대기','lineup':'라인업 경기 진행 대기','departing':'경기 화면 진입 대기','playing':'경기 진행','result_confirm':'결과 확인 버튼 대기','returning':'결과 확인 후 로비 복귀 대기'}
+                        scores=' / '.join(f'{records[key]["name"]}={results[key][2]:.3f}({"인식" if results[key][0] else "미인식"})' for key in referenced if key in results)
+                        self.emit(f'랭킹 대기 · {labels[ranking.phase]} · 완료 {ranking.completed}/{ranking.target}회 · {scores}')
+                        heartbeat=now
+                    self.stop.wait(interval);continue
                 action = machine.observe({n: r[0] for n, r in results.items()}, now)
                 while machine.events:
                     self.emit(machine.events.pop(0))
@@ -480,10 +521,11 @@ if __name__ == '__main__':
         app.rule_manager.edit(True)
         app.manage_progress()
         app.manage_notifications()
+        app.manage_ranking()
         root.update()
         (ROOT/'logs'/'selftest.json').write_text(json.dumps({
             'frozen': bool(getattr(sys, 'frozen', False)), 'template_score': score,
-            'gui': 'ok', 'capture_editor': 'ok', 'point_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok', 'progress_manager': 'ok', 'notification_manager': 'ok'}), encoding='utf-8')
+            'gui': 'ok', 'capture_editor': 'ok', 'point_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok', 'progress_manager': 'ok', 'notification_manager': 'ok', 'ranking_manager': 'ok'}), encoding='utf-8')
         root.destroy()
     else:
         root.mainloop()
