@@ -7,7 +7,7 @@ from app import App
 from registry import new_button
 from ranking import *
 
-KEYS=['lobby','refresh','points','paid','series','disabled','proceed','result','confirm']
+KEYS=['lobby','refresh','points','paid','series','disabled','proceed','result','confirm','refresh_dialog','points_confirm','star_confirm']
 def fixture():
     records=[]
     for i,key in enumerate(KEYS):
@@ -107,11 +107,11 @@ class RankingTests(unittest.TestCase):
         self.assertEqual(self.frames(m,visible('lobby','disabled','points'),3),[None,None,'points'])
         m=self.machine()
         for t in range(6):self.assertIsNone(m.observe(visible('lobby','disabled','points','paid'),t))
-    def test_free_refresh_precedes_points_and_points_can_be_disabled(self):
+    def test_free_refresh_precedes_points_and_points_are_mandatory(self):
         m=self.machine()
         self.assertEqual(self.frames(m,visible('lobby','disabled','refresh','points'),0),[None,None,'refresh'])
-        records,cfg=fixture();cfg['points']='';m=RankingMachine(cfg,records,1)
-        for t in range(6):self.assertIsNone(m.observe(visible('lobby','disabled','points'),t))
+        records,cfg=fixture();cfg['points']=''
+        with self.assertRaises(ValueError):RankingMachine(cfg,records,1)
     def test_points_template_requires_search_area(self):
         records,cfg=fixture();next(r for r in records if r['id']=='points')['roi']=None
         with self.assertRaises(ValueError):validate_ranking(cfg,records)
@@ -156,3 +156,56 @@ class RankingTests(unittest.TestCase):
         with self.assertRaises(ValueError):validate_ranking(dict(cfg,reward_confirm=''),records)
         next(r for r in records if r['id']=='reward')['roi']=None
         with self.assertRaises(ValueError):validate_ranking(cfg,records)
+
+    def test_points_popup_confirmation_once_then_wait_for_close(self):
+        m=self.machine()
+        self.assertEqual(self.frames(m,visible('lobby','disabled','points'),0),[None,None,'points'])
+        self.assertEqual(self.frames(m,visible('refresh_dialog','points_confirm'),3),[None,None,'points_confirm'])
+        for t in range(6,12):self.assertIsNone(m.observe(visible('refresh_dialog','points_confirm','series'),t))
+        self.assertEqual(m.phase,'refresh_return')
+        self.frames(m,visible('lobby','series'),12)
+        self.assertEqual(self.frames(m,visible('lobby','series'),15),[None,None,'series'])
+    def test_wrong_currency_or_missing_title_never_confirms(self):
+        for found in [visible('refresh_dialog','star_confirm'),visible('points_confirm'),visible('refresh_dialog','points_confirm','star_confirm')]:
+            m=self.machine();self.frames(m,visible('lobby','disabled','points'),0)
+            for t in range(3,10):self.assertIsNone(m.observe(found,t))
+            self.assertEqual(m.phase,'points_confirm')
+    def test_star_off_never_opens_or_confirms_and_on_completes(self):
+        m=self.machine()
+        for t in range(6):self.assertIsNone(m.observe(visible('lobby','disabled','paid'),t))
+        records,cfg=fixture();cfg['allow_star']=True;m=RankingMachine(cfg,records,2)
+        self.assertEqual(self.frames(m,visible('lobby','disabled','paid'),0),[None,None,'paid'])
+        self.assertEqual(self.frames(m,visible('refresh_dialog','star_confirm'),3),[None,None,'star_confirm'])
+        self.assertEqual(m.phase,'refresh_return')
+        m=self.machine();m.phase='star_confirm'
+        for t in range(6):self.assertIsNone(m.observe(visible('refresh_dialog','star_confirm'),t))
+    def test_enabled_star_still_prioritizes_active_series_and_points(self):
+        records,cfg=fixture();cfg['allow_star']=True;m=RankingMachine(cfg,records,2)
+        self.assertEqual(self.frames(m,visible('lobby','series','paid'),0),[None,None,'series'])
+        m=RankingMachine(cfg,records,2)
+        for t in range(6):self.assertIsNone(m.observe(visible('lobby','disabled','points','paid'),t))
+    def test_star_and_payment_settings_validation(self):
+        records,cfg=fixture()
+        with self.assertRaises(ValueError):validate_ranking(dict(cfg,allow_star=True,star_confirm=''),records)
+        with self.assertRaises(ValueError):validate_ranking(dict(cfg,points_confirm=''),records)
+        next(r for r in records if r['id']=='points_confirm')['click_mode']='center'
+        with self.assertRaises(ValueError):validate_ranking(cfg,records)
+    def test_runner_points_payment_closes_popup_before_series(self):
+        records,cfg=fixture();app=App.__new__(App);app.stop=threading.Event();app.stop.wait=Mock(return_value=False)
+        app.emit=Mock();app.registry=Mock();app.registry.resolve.side_effect=lambda p:p
+        adb=Mock();adb.screenshot.side_effect=range(100)
+        def matcher(path,*args,**kwargs):
+            key=path.removesuffix('.png');obj=Mock()
+            def find(frame):
+                if frame<3:seen=['lobby','disabled','points']
+                elif frame<6:seen=['refresh_dialog','points_confirm']
+                elif frame<14:seen=['lobby','series']
+                elif frame<19:seen=['proceed']
+                elif frame<24:seen=[]
+                else:seen=['result','confirm']
+                return key in seen,(100,200),.99,(720,1280)
+            obj.find.side_effect=find;return obj
+        with patch('app.ADB',return_value=adb),patch('vision.Matcher',side_effect=matcher),patch('app.time.monotonic',side_effect=range(1000)):
+            app.run(dict(buttons=records,rules=[],ranking=cfg,games=1,dry=False,adb='adb',serial='device'))
+        self.assertEqual([c.args[0] for c in adb.tap.call_args_list],[(12,20),(20,20),(14,20),(16,20)])
+        self.assertTrue(any('목표 횟수 완료' in c.args[0] for c in app.emit.call_args_list))

@@ -326,12 +326,12 @@ class App:
             if notification_config['enabled']:
                 referenced.update(notification_config['watch'])
             if ranking_config['enabled']:
-                referenced.update(ranking_config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm') if ranking_config.get(key))
+                referenced.update(ranking_config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm','refresh_dialog','points_confirm','star_confirm') if ranking_config.get(key))
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
                        (r.get('kind', 'normal') == 'normal' or r['id'] in referenced)}
             if not records:
                 raise ValueError('사용할 버튼이 없습니다.')
-            color_keys={ranking_config[key] for key in ('series','disabled','refresh','points','paid','reward') if ranking_config.get(key)} if ranking_config['enabled'] else set()
+            color_keys={ranking_config[key] for key in ('series','disabled','refresh','points','paid','reward','points_confirm','star_confirm') if ranking_config.get(key)} if ranking_config['enabled'] else set()
             matchers = {key: Matcher(self.registry.resolve(r['template']), r['threshold'], r['roi'], **({'color_tolerance':25} if key in color_keys else {}))
                         for key, r in records.items()}
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
@@ -345,7 +345,7 @@ class App:
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             if progress_config['enabled']:
                 self.emit(f'진행 보조 클릭 ON · 두 이미지 미인식 {float(progress_config["delay"]):g}초 후 / {float(progress_config["interval"]):g}초 간격 / 좌표={tuple(progress_config["point"])}')
-            if ranking_config['enabled']:self.emit(f'랭킹 모드 · 목표 연속 경기 {ranking.target}회 · 연속 경기 우선 · 비활성 확인 시 무료/일반 포인트 갱신 사용 · 별 재화 갱신 건너뜀')
+            if ranking_config['enabled']:self.emit(f'랭킹 모드 · 목표 연속 경기 {ranking.target}회 · 연속 경기 우선 · 비활성 확인 시 무료/일반 포인트 갱신 사용 · 별 갱신 설정={ranking_config.get("allow_star",False)}')
             dimensions = None
             previous_state = None
             heartbeat = taps = 0
@@ -390,7 +390,7 @@ class App:
                         if ranking_action==ranking_config['proceed']:
                             machine=WorkflowMachine(records,rules,now,detection_frames=frames)
                     if now-heartbeat>=5:
-                        labels={'lobby':'무료/별 갱신 상태 확인','series':'연속 경기 대기','lineup':'라인업 경기 진행 대기','departing':'경기 화면 진입 대기','playing':'경기 진행','result_confirm':'결과 확인 버튼 대기','returning':'결과 확인 후 로비 복귀 대기','reward_confirm':'15회 보상 팝업 확인 대기','reward_return':'15회 보상 수령 후 로비 확인 대기'}
+                        labels={'lobby':'무료/별 갱신 상태 확인','series':'연속 경기 대기','lineup':'라인업 경기 진행 대기','departing':'경기 화면 진입 대기','playing':'경기 진행','result_confirm':'결과 확인 버튼 대기','returning':'결과 확인 후 로비 복귀 대기','reward_confirm':'15회 보상 팝업 확인 대기','reward_return':'15회 보상 수령 후 로비 확인 대기','points_confirm':'즉시 갱신 포인트 확인 대기','star_confirm':'즉시 갱신 별 확인 대기','refresh_return':'즉시 갱신 팝업 종료 대기'}
                         scores=' / '.join(f'{records[key]["name"]}={results[key][2]:.3f}({"인식" if results[key][0] else "미인식"})' for key in referenced if key in results)
                         self.emit(f'랭킹 대기 · {labels[ranking.phase]} · 완료 {ranking.completed}/{ranking.target}회 · {scores}')
                         heartbeat=now
