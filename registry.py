@@ -7,7 +7,7 @@ from pathlib import Path
 
 def new_button(name='새 버튼'):
     return dict(id=uuid.uuid4().hex, name=name, enabled=False, template='',
-                roi=None, size=None, threshold=.90, cooldown=2., disappear_timeout=8., kind='normal',
+                roi=None, size=None, threshold=.90, cooldown=2., click_delay=0., disappear_timeout=8., kind='normal',
                 click_mode='center', click_point=None, click_size=None)
 
 
@@ -39,6 +39,9 @@ def validate(records):
         for key in ('cooldown',):
             if not math.isfinite(float(r[key])) or float(r[key]) < .5:
                 raise ValueError('클릭 간격은 0.5초 이상이어야 합니다.')
+        delay=float(r.get('click_delay',0))
+        if not math.isfinite(delay) or not 0<=delay<=3600:
+            raise ValueError('클릭 전 대기는 0~3600초입니다.')
         roi = r.get('roi')
         if roi is not None and (len(roi) != 4 or any(type(x) is not int for x in roi)
                                 or min(roi[:2]) < 0 or min(roi[2:]) <= 0):

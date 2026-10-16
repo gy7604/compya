@@ -85,6 +85,8 @@ class WorkflowMachine:
         self.events = []
         self.next_armed = False
         self.success_armed = False
+        self.step_visible_since=None
+        self.observed_now=now
 
     def new_normal(self, now):
         return ActionMachine(now, policies=self.records, priority_order=self.normal_ids, detection_frames=self.detection_frames)
@@ -99,7 +101,12 @@ class WorkflowMachine:
     def status(self):
         if self.active:
             label = {'wait':'버튼 나타남 대기', 'verify':'클릭 후 확인', 'success':'최종 이미지 대기'}[self.phase]
+            if self.phase=='wait' and self.step_visible_since is not None:
+                remaining=max(0.,float(self.records[self.active['steps'][self.index]['button']].get('click_delay',0))-(self.observed_now-self.step_visible_since))
+                if remaining>0:label=f'클릭 전 대기 · 남은 {remaining:.1f}초'
             return f'규칙 {self.active["name"]} · {self.index+1}/{len(self.active["steps"])} · {label}'
+        if self.normal.delay_remaining>0:
+            return f'{self.records[self.normal.candidate]["name"]} 클릭 전 대기 · 남은 {self.normal.delay_remaining:.1f}초'
         return f'{self.records[self.normal.pending]["name"]} 사라짐 대기' if self.normal.pending else '버튼 대기 · 우선순위 적용'
 
     def update_conditions(self, present):
@@ -115,6 +122,7 @@ class WorkflowMachine:
     def observe(self, present, now):
         if self.finished:
             return None
+        self.observed_now=now
         self.update_conditions(present)
         if self.active:
             return self.observe_rule(present, now)
@@ -128,6 +136,7 @@ class WorkflowMachine:
             self.active = ready
             self.queued = None
             self.index, self.phase, self.since = 0, 'wait', now
+            self.step_visible_since=None
             self.visible = self.absent = 0
             self.success_armed = not present.get(ready['success'], False)
             self.rearmed[ready['id']] = False
@@ -147,7 +156,10 @@ class WorkflowMachine:
             self.success_armed = True
         if self.phase == 'wait':
             self.visible = self.visible+1 if present.get(key, False) else 0
-            if self.visible >= self.detection_frames and now >= self.next_allowed:
+            if not present.get(key,False):self.step_visible_since=None
+            elif self.step_visible_since is None:self.step_visible_since=now
+            delay_done=self.step_visible_since is not None and now-self.step_visible_since>=float(record.get('click_delay',0))
+            if self.visible >= self.detection_frames and now >= self.next_allowed and delay_done:
                 self.phase, self.since = 'verify', now
                 self.visible = self.absent = 0
                 self.next_allowed = now+record['cooldown']
@@ -170,6 +182,7 @@ class WorkflowMachine:
                 if self.index+1 < len(rule['steps']):
                     self.index += 1
                     self.phase = 'wait'
+                    self.step_visible_since=None
                 elif rule['success']:
                     self.phase = 'success'
                 else:

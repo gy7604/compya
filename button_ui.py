@@ -106,10 +106,10 @@ class ButtonManager:
         win.bind('<Destroy>', restore_manager)
         values = {}
         labels = [('name', '버튼 이름'), ('threshold', '인식 기준 (0.5~1)'),
-                  ('cooldown', '클릭 후 최소 간격 (초)'),
+                  ('cooldown', '클릭 후 최소 간격 (초)'), ('click_delay', '클릭 전 대기 (초 · 일반/조건 규칙)'),
                   ('roi', '검색 영역 x,y,너비,높이 (빈칸=전체)')]
         for row, (key, label) in enumerate(labels):
-            v = draft.get(key)
+            v = draft.get(key,0 if key=='click_delay' else None)
             if key == 'roi':
                 v = ','.join(map(str, v)) if v else ''
             values[key] = tk.StringVar(value=str(v))
@@ -226,7 +226,7 @@ class ButtonManager:
                 return
             try:
                 draft['name'] = values['name'].get().strip()
-                for key in ('threshold', 'cooldown'):
+                for key in ('threshold', 'cooldown', 'click_delay'):
                     draft[key] = float(values[key].get())
                 draft['enabled'] = enabled.get()
                 draft['kind'] = next(key for key, label in kind_labels.items() if label == kind.get())
