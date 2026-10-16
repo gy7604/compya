@@ -12,5 +12,9 @@ def write_stop_snapshot(root, png, records, results, pending, dry):
                    buttons=[dict(id=key, name=records[key]['name'], matched=result[0],
                                  score=result[2], threshold=records[key]['threshold'],
                                  candidate=result[1], roi=records[key]['roi']) for key, result in results.items()])
+    for item in details['buttons']:
+        record=records[item['id']]
+        item['click_mode']=record.get('click_mode','center')
+        item['click_point']=record.get('click_point')
     (folder/'last_stop.json').write_text(json.dumps(details, ensure_ascii=False, indent=2), encoding='utf-8')
     return path

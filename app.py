@@ -14,6 +14,7 @@ from rules import RuleStore, WorkflowMachine, validate_rules
 from registry import Registry
 from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
+from clicks import click_point
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -279,6 +280,9 @@ class App:
                 if (dimensions is not None and dimensions != size) or any(v != size for v in expected.values()):
                     raise RuntimeError('등록 이미지와 화면 해상도가 다릅니다. 현재 해상도로 다시 등록하세요.')
                 dimensions = size
+                for record in records.values():
+                    if record.get('click_mode') == 'fixed':
+                        click_point(record,(0,0),size)
                 if self.stop.is_set():
                     break
                 now = time.monotonic()
@@ -291,16 +295,21 @@ class App:
                 if action:
                     if self.stop.is_set():
                         break
-                    _, point, score, _ = results[action]
+                    _, matched_point, score, _ = results[action]
+                    point = click_point(records[action],matched_point,size)
                     if not cfg['dry']:
                         adb.tap(point)
                     taps += 1
                     label = records[action]['name']
-                    self.emit(f'{"모의 탭" if cfg["dry"] else "탭"} #{taps} {label} 좌표={point} 점수={score:.3f}')
+                    mode='지정 좌표' if records[action].get('click_mode')=='fixed' else '이미지 중앙'
+                    self.emit(f'{"모의 탭" if cfg["dry"] else "탭"} #{taps} {label} 좌표={point} 인식위치={matched_point} 방식={mode} 점수={score:.3f}')
                 state = machine.status
                 if previous_state != state or now-heartbeat >= 5:
-                    scores = ' / '.join(f'{records[n]["name"]}={r[2]:.3f}' for n, r in results.items())
-                    self.emit(state + ' · ' + scores)
+                    scores = ' / '.join(f'{records[n]["name"]}={r[2]:.3f}(기준 {records[n]["threshold"]:.3f})' for n, r in results.items())
+                    self.emit(('모의 실행 · ' if cfg['dry'] else '실제 실행 · ') + state + ' · ' + scores)
+                    if machine.normal.pending and machine.active is None:
+                        name=records[machine.normal.pending]['name']
+                        self.emit(f'클릭 보류 · {name} 사라짐 확인 {machine.normal.absent}/3회. 아직 인식되면 다음 클릭을 보내지 않습니다.')
                     previous_state, heartbeat = state, now
                 self.stop.wait(interval)
         except Exception as e:
@@ -380,11 +389,12 @@ if __name__ == '__main__':
         raise SystemExit(1)
     if '--self-test' in sys.argv:
         from vision import Matcher
-        from capture import editor
+        from capture import editor, point_editor
         png = (ROOT/'assets'/'catcher.png').read_bytes()
         found, point, score, size = Matcher(ROOT/'assets'/'catcher.png').find(png)
         assert found
         editor(root, png, ROOT/'logs'/'unused.png', lambda *args: None)
+        point_editor(root, png, lambda *args: None)
         app.manage()
         app.manager.edit(True)
         app.manage_rules()
@@ -392,7 +402,7 @@ if __name__ == '__main__':
         root.update()
         (ROOT/'logs'/'selftest.json').write_text(json.dumps({
             'frozen': bool(getattr(sys, 'frozen', False)), 'template_score': score,
-            'gui': 'ok', 'capture_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok'}), encoding='utf-8')
+            'gui': 'ok', 'capture_editor': 'ok', 'point_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok'}), encoding='utf-8')
         root.destroy()
     else:
         root.mainloop()

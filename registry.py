@@ -7,7 +7,8 @@ from pathlib import Path
 
 def new_button(name='새 버튼'):
     return dict(id=uuid.uuid4().hex, name=name, enabled=False, template='',
-                roi=None, size=None, threshold=.90, cooldown=2., disappear_timeout=8., kind='normal')
+                roi=None, size=None, threshold=.90, cooldown=2., disappear_timeout=8., kind='normal',
+                click_mode='center', click_point=None, click_size=None)
 
 
 def validate(records):
@@ -21,6 +22,16 @@ def validate(records):
         ids.add(r['id'])
         if r.get('kind', 'normal') not in ('normal', 'condition', 'step'):
             raise ValueError('이미지 용도가 올바르지 않습니다.')
+        if r.get('click_mode', 'center') not in ('center', 'fixed'):
+            raise ValueError('클릭 위치 방식이 올바르지 않습니다.')
+        if r.get('click_mode') == 'fixed':
+            point, click_size = r.get('click_point'), r.get('click_size')
+            if point is None or len(point) != 2 or any(type(x) is not int or x < 0 for x in point):
+                raise ValueError('지정 클릭 좌표 X,Y를 입력하세요.')
+            if click_size is None or len(click_size) != 2 or any(type(x) is not int or x <= 0 for x in click_size):
+                raise ValueError('화면에서 클릭 위치를 선택해 기준 해상도를 등록하세요.')
+            if point[0] >= click_size[0] or point[1] >= click_size[1]:
+                raise ValueError('클릭 좌표가 등록 화면을 벗어납니다.')
         if not isinstance(r['enabled'], bool):
             raise ValueError('사용 여부가 올바르지 않습니다.')
         if not .5 <= float(r['threshold']) <= 1:

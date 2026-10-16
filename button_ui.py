@@ -6,6 +6,7 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from registry import new_button, validate
+from clicks import click_point
 
 
 class ButtonManager:
@@ -121,6 +122,30 @@ class ButtonManager:
         ttk.Combobox(win, textvariable=kind, values=list(kind_labels.values()), state='readonly', width=35).grid(row=5, column=1, columnspan=2)
         image_label = tk.StringVar(value=draft['template'] or '이미지 미등록')
         ttk.Label(win, textvariable=image_label, wraplength=520).grid(row=6, column=0, columnspan=3, padx=10, pady=8)
+        click_labels={'center':'인식한 이미지 중앙','fixed':'지정 좌표'}
+        click_mode=tk.StringVar(value=click_labels[draft.get('click_mode','center')])
+        saved_point=draft.get('click_point') or ['', '']
+        click_x=tk.StringVar(value=str(saved_point[0]));click_y=tk.StringVar(value=str(saved_point[1]))
+        click_info=tk.StringVar(value=f'기준 해상도: {draft.get("click_size") or draft.get("size") or "미등록"}')
+
+        def click_fields():
+            mode=next(key for key,label in click_labels.items() if label==click_mode.get())
+            if mode=='center':return dict(click_mode='center',click_point=None,click_size=None)
+            try:point=[int(click_x.get()),int(click_y.get())]
+            except ValueError:raise ValueError('클릭 좌표 X,Y를 정수로 입력하거나 화면에서 선택하세요.')
+            return dict(click_mode='fixed',click_point=point,click_size=draft.get('click_size') or draft.get('size'))
+
+        def pick_point():
+            def received(png):
+                if not win.winfo_exists():return
+                from capture import point_editor
+                def saved(point,size):
+                    draft['click_size']=size
+                    click_x.set(str(point[0]));click_y.set(str(point[1]))
+                    click_mode.set(click_labels['fixed'])
+                    click_info.set(f'기준 해상도: {size[0]}×{size[1]}')
+                point_editor(win,png,saved)
+            self.app.request_capture(received)
 
         def accept_image(path, roi=None, size=None):
             draft['template'] = self.store.portable(path)
@@ -185,8 +210,10 @@ class ButtonManager:
                         found, point, score, size = matcher.find(png)
                         if draft.get('size') and tuple(draft['size']) != size:
                             raise ValueError('등록 해상도와 현재 화면이 다릅니다. 다시 캡처하세요.')
+                        click_record=dict(draft,**click_fields())
+                        target=click_point(click_record,point,size)
                         messagebox.showinfo('인식 테스트 · 클릭 없음',
-                            f'{"인식 성공" if found else "인식 실패"}\n점수: {score:.3f}\n후보 좌표: {point}\n화면: {size}', parent=win)
+                            f'{"인식 성공" if found else "인식 실패"}\n점수: {score:.3f}\n인식 이미지 중앙: {point}\n클릭 예정 좌표: {target}\n화면: {size}\n감지 전용은 클릭하지 않습니다.', parent=win)
                     except Exception as e:
                         messagebox.showerror('인식 테스트 실패', str(e), parent=win)
                 self.app.request_capture(received)
@@ -204,6 +231,7 @@ class ButtonManager:
                 draft['enabled'] = enabled.get()
                 draft['kind'] = next(key for key, label in kind_labels.items() if label == kind.get())
                 draft['roi'] = [int(x) for x in values['roi'].get().split(',')] if values['roi'].get().strip() else None
+                draft.update(click_fields())
                 records = copy.deepcopy(self.app.records)
                 if adding:
                     records.append(draft)
@@ -223,6 +251,13 @@ class ButtonManager:
         ttk.Button(win, text='PNG 불러오기', command=import_image).grid(row=7, column=1)
         ttk.Button(win, text='이미지 보기', command=preview).grid(row=7, column=2, padx=10)
         ttk.Button(win, text='현재 화면 인식 테스트 (클릭 없음)', command=test).grid(row=8, column=0, columnspan=3, pady=5)
-        ttk.Label(win, text='변경한 이미지와 설정은 저장을 눌러야 적용됩니다.').grid(row=9, column=0, columnspan=3)
-        ttk.Button(win, text='저장', command=apply).grid(row=10, column=1, pady=12)
-        ttk.Button(win, text='취소', command=win.destroy).grid(row=10, column=2)
+        point_bar=ttk.Frame(win);point_bar.grid(row=9,column=0,columnspan=3,padx=10,pady=6,sticky='w')
+        ttk.Label(point_bar,text='클릭 위치 ').pack(side='left')
+        ttk.Combobox(point_bar,textvariable=click_mode,values=list(click_labels.values()),state='readonly',width=23).pack(side='left')
+        ttk.Label(point_bar,text=' X ').pack(side='left');ttk.Entry(point_bar,textvariable=click_x,width=6).pack(side='left')
+        ttk.Label(point_bar,text=' Y ').pack(side='left');ttk.Entry(point_bar,textvariable=click_y,width=6).pack(side='left')
+        ttk.Button(win,text='화면에서 클릭 위치 선택',command=pick_point).grid(row=10,column=0,padx=10,pady=5)
+        ttk.Label(win,textvariable=click_info).grid(row=10,column=1,columnspan=2,sticky='w')
+        ttk.Label(win, text='이미지가 인식되면 위 좌표로 탭을 보냅니다. 저장을 눌러야 적용됩니다.').grid(row=11, column=0, columnspan=3)
+        ttk.Button(win, text='저장', command=apply).grid(row=12, column=1, pady=12)
+        ttk.Button(win, text='취소', command=win.destroy).grid(row=12, column=2)

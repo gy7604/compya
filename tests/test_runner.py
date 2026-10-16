@@ -6,7 +6,7 @@ from registry import new_button
 
 
 class RunnerTests(unittest.TestCase):
-    def run_sequence(self, dry, speed=None):
+    def run_sequence(self, dry, speed=None, fixed=False):
         app = App.__new__(App)
         app.stop = threading.Event()
         if speed is not None:
@@ -26,6 +26,8 @@ class RunnerTests(unittest.TestCase):
         buttons = [new_button('PLAY BALL'), new_button('포수 리드'), new_button('꺼진 버튼')]
         for r, path in zip(buttons, ['pb.png', 'pitch.png']):
             r.update(enabled=True, template=path)
+        if fixed:
+            buttons[0].update(click_mode='fixed',click_point=[600,900],click_size=[720,1280])
         cfg = dict(buttons=buttons, adb='adb', serial='emulator-5554', wait=180, dry=dry)
         if speed is not None:
             cfg['speed'] = speed
@@ -50,3 +52,11 @@ class RunnerTests(unittest.TestCase):
     def test_fast_runner_does_not_add_a_fixed_poll_delay(self):
         adb, _ = self.run_sequence(False, '빠름 · 1회 인식')
         self.assertEqual(adb.tap.call_count, 2)
+
+    def test_runner_taps_fixed_coordinate_instead_of_image_center(self):
+        adb,_=self.run_sequence(False,'빠름 · 1회 인식',fixed=True)
+        self.assertEqual([c.args[0] for c in adb.tap.call_args_list],[(600,900),(300,400)])
+
+    def test_fixed_coordinate_dry_run_never_sends_taps(self):
+        adb,_=self.run_sequence(True,'빠름 · 1회 인식',fixed=True)
+        adb.tap.assert_not_called()

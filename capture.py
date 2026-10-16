@@ -15,6 +15,57 @@ def selection_box(start, end, scale, width, height):
     return x1, y1, x2, y2
 
 
+def scaled_point(point, scale, width, height):
+    x, y = int(point[0]*scale), int(point[1]*scale)
+    if scale < 1 or not (0 <= x < width and 0 <= y < height):
+        raise ValueError('게임 화면 안의 클릭 위치를 선택하세요.')
+    return x, y
+
+
+def point_editor(parent, png, on_saved):
+    previous_grab = parent.grab_current()
+    window = tk.Toplevel(parent)
+    window.title('클릭 좌표 선택 · 실제 누를 곳을 한 번 클릭하세요')
+    window.transient(parent)
+    window.grab_set()
+    def restore(event):
+        if event.widget == window and previous_grab is not None and previous_grab.winfo_exists():
+            previous_grab.grab_set()
+    window.bind('<Destroy>', restore)
+    full = tk.PhotoImage(data=base64.b64encode(png).decode('ascii'))
+    width, height = full.width(), full.height()
+    scale = max(1, math.ceil(width/(parent.winfo_screenwidth()*.75)),
+                math.ceil(height/(parent.winfo_screenheight()*.70)))
+    preview = full.subsample(scale, scale)
+    canvas = tk.Canvas(window, width=preview.width(), height=preview.height(), cursor='crosshair',
+                       borderwidth=0, highlightthickness=0)
+    canvas.pack()
+    canvas.create_image(0,0,anchor='nw',image=preview)
+    canvas.preview=preview
+    state={'point':None}
+    label=tk.StringVar(value=f'게임 원본 화면 {width}×{height} · 누를 곳을 선택하세요. 실제 탭은 보내지 않습니다.')
+    def pick(event):
+        try:
+            state['point']=scaled_point((event.x,event.y),scale,width,height)
+            canvas.delete('target')
+            canvas.create_oval(event.x-8,event.y-8,event.x+8,event.y+8,outline='#00ff66',width=2,tags='target')
+            canvas.create_line(event.x-14,event.y,event.x+14,event.y,fill='#00ff66',tags='target')
+            canvas.create_line(event.x,event.y-14,event.x,event.y+14,fill='#00ff66',tags='target')
+            label.set(f'지정 좌표 X={state["point"][0]}, Y={state["point"][1]} · 원본 {width}×{height}')
+        except Exception as e:
+            messagebox.showerror('위치 선택',str(e),parent=window)
+    def save():
+        if state['point'] is None:
+            messagebox.showinfo('위치 선택','먼저 화면에서 실제 누를 곳을 선택하세요.',parent=window)
+            return
+        on_saved(list(state['point']),[width,height])
+        window.destroy()
+    canvas.bind('<Button-1>',pick)
+    ttk.Label(window,textvariable=label).pack(padx=10,pady=8)
+    ttk.Button(window,text='이 좌표 사용',command=save).pack(side='left',padx=10,pady=8)
+    ttk.Button(window,text='취소',command=window.destroy).pack(side='right',padx=10,pady=8)
+
+
 def save_region(png, box, path):
     import cv2
     import numpy as np
