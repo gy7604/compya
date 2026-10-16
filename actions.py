@@ -3,7 +3,9 @@ from engine import SafetyStop
 
 class ActionMachine:
     """Single shared latch: no other action until tapped button disappears."""
-    def __init__(self, now, timeout=180, policies=None, priority_order=None):
+    def __init__(self, now, timeout=180, policies=None, priority_order=None, detection_frames=3):
+        if type(detection_frames) is not int or not 1 <= detection_frames <= 3:
+            raise ValueError('연속 인식 횟수는 1~3입니다.')
         self.timeout = timeout
         self.since = now
         self.pending = None
@@ -13,6 +15,7 @@ class ActionMachine:
         self.policies = policies or {}
         self.next_allowed = float('-inf')
         self.priority_order = priority_order
+        self.detection_frames = detection_frames
 
     def observe(self, present, now):
         limit = self.policies.get(self.pending, {}).get('disappear_timeout', 8) if self.pending else self.timeout
@@ -36,7 +39,7 @@ class ActionMachine:
             self.counts[name] = self.counts.get(name, 0)+1 if matches == [name] else 0
         if len(matches) == 1:
             name = matches[0]
-            if self.counts[name] >= 3 and now >= self.next_allowed:
+            if self.counts[name] >= self.detection_frames and now >= self.next_allowed:
                 self.pending = name
                 self.since = self.last_tap = now
                 self.absent = 0

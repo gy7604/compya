@@ -67,11 +67,12 @@ class RuleStore:
 
 
 class WorkflowMachine:
-    def __init__(self, records, rules, now, timeout=180):
+    def __init__(self, records, rules, now, timeout=180, detection_frames=3):
         validate_rules(rules, list(records.values()))
         self.records = records
         self.rules = [r for r in rules if r['enabled']]
         self.timeout = timeout
+        self.detection_frames = detection_frames
         self.normal_ids = [key for key, r in records.items() if r.get('kind', 'normal') == 'normal']
         self.normal = self.new_normal(now)
         self.active = None
@@ -91,7 +92,7 @@ class WorkflowMachine:
         self.success_armed = False
 
     def new_normal(self, now):
-        return ActionMachine(now, self.timeout, self.records, self.normal_ids)
+        return ActionMachine(now, self.timeout, self.records, self.normal_ids, self.detection_frames)
 
     @property
     def pending(self):
@@ -124,7 +125,7 @@ class WorkflowMachine:
             return self.observe_rule(present, now)
         if self.queued is None:
             self.queued = next((r for r in self.rules if self.rearmed[r['id']] and r['id'] not in self.completed
-                                and self.condition_counts.get(r['id'], 0) >= 3), None)
+                                and self.condition_counts.get(r['id'], 0) >= self.detection_frames), None)
             if self.queued and self.normal.pending is not None:
                 self.events.append(f'조건 감지 · {self.queued["name"]} 예약, 현재 클릭의 사라짐 확인 대기')
         ready = self.queued
@@ -157,7 +158,7 @@ class WorkflowMachine:
             raise SafetyStop(f'규칙 "{rule["name"]}" {self.index+1}단계 "{record["name"]}" · {phase} {limit:g}초 시간 초과')
         if self.phase == 'wait':
             self.visible = self.visible+1 if present.get(key, False) else 0
-            if self.visible >= 3 and now >= self.next_allowed:
+            if self.visible >= self.detection_frames and now >= self.next_allowed:
                 self.phase, self.since = 'verify', now
                 self.visible = self.absent = 0
                 self.next_allowed = now+record['cooldown']

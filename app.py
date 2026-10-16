@@ -13,6 +13,7 @@ from engine import Settings, SafetyStop
 from rules import RuleStore, WorkflowMachine, validate_rules
 from registry import Registry
 from version import VERSION
+from speed import MODES, DEFAULT_MODE, speed_settings
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -55,6 +56,10 @@ class App:
             v = tk.StringVar(value=value)
             self.fields[key] = v
             ttk.Entry(form, textvariable=v, width=55).grid(row=row, column=1, sticky='ew')
+        mode = saved.get('speed', DEFAULT_MODE)
+        self.fields['speed'] = tk.StringVar(value=mode if mode in MODES else DEFAULT_MODE)
+        ttk.Label(form, text='인식 반응속도').grid(row=0, column=2, padx=8)
+        ttk.Combobox(form, textvariable=self.fields['speed'], values=list(MODES), state='readonly', width=22).grid(row=1, column=2, padx=8)
         self.button_summary = tk.StringVar(value=f'등록 {len(self.records)}개 / 사용 {sum(r["enabled"] for r in self.records)}개')
         ttk.Button(form, text='버튼 관리 · 추가 / 수정 / 이미지 교체', command=self.manage).grid(row=4, column=0, padx=0, pady=12)
         ttk.Label(form, textvariable=self.button_summary).grid(row=4, column=1, sticky='w')
@@ -217,6 +222,7 @@ class App:
             config = {k: v.get() for k, v in self.fields.items()}
             config['wait'] = float(config['wait'])
             config['games'] = int(config['games'])
+            speed_settings(config['speed'])
             if not 1 <= config['games'] <= 9999:
                 raise ValueError('목표 경기 수는 1~9999입니다.')
             import copy
@@ -258,8 +264,10 @@ class App:
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
             adb = ADB(cfg['adb'], cfg['serial'])
             adb.connect()
-            machine = WorkflowMachine(records, rules, time.monotonic(), cfg['wait'])
+            frames, interval = speed_settings(cfg.get('speed', DEFAULT_MODE))
+            machine = WorkflowMachine(records, rules, time.monotonic(), cfg['wait'], frames)
             self.emit('시작 · ' + ('모의 실행' if cfg['dry'] else '실제 탭 전송'))
+            self.emit(f'반응속도 · 인식 {frames}회 / 추가 화면 대기 {interval:g}초 / 전환 확인 3회 유지')
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             dimensions = None
             previous_state = None
@@ -294,7 +302,7 @@ class App:
                     scores = ' / '.join(f'{records[n]["name"]}={r[2]:.3f}' for n, r in results.items())
                     self.emit(state + ' · ' + scores)
                     previous_state, heartbeat = state, now
-                self.stop.wait(0.25)
+                self.stop.wait(interval)
         except Exception as e:
             self.emit(f'안전 중지 · {e}')
             if isinstance(e, SafetyStop):

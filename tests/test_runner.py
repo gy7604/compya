@@ -6,9 +6,11 @@ from registry import new_button
 
 
 class RunnerTests(unittest.TestCase):
-    def run_sequence(self, dry):
+    def run_sequence(self, dry, speed=None):
         app = App.__new__(App)
         app.stop = threading.Event()
+        if speed is not None:
+            app.stop.wait = Mock(return_value=False)
         app.emit = Mock()
         app.registry = Mock()
         app.registry.resolve.side_effect = lambda x: x
@@ -25,10 +27,15 @@ class RunnerTests(unittest.TestCase):
         for r, path in zip(buttons, ['pb.png', 'pitch.png']):
             r.update(enabled=True, template=path)
         cfg = dict(buttons=buttons, adb='adb', serial='emulator-5554', wait=180, dry=dry)
+        if speed is not None:
+            cfg['speed'] = speed
         with patch('app.ADB', return_value=adb), patch('vision.Matcher', side_effect=factory), \
              patch('app.time.monotonic', side_effect=range(100)):
             app.run(cfg)
         self.assertTrue(app.stop.is_set())
+        if speed is not None:
+            self.assertTrue(app.stop.wait.called)
+            self.assertTrue(all(call.args == (0.0,) for call in app.stop.wait.call_args_list))
         return adb, app
 
     def test_actual_tap_order_and_connection_stop(self):
@@ -39,3 +46,7 @@ class RunnerTests(unittest.TestCase):
     def test_dry_run_never_sends_taps(self):
         adb, _ = self.run_sequence(True)
         adb.tap.assert_not_called()
+
+    def test_fast_runner_does_not_add_a_fixed_poll_delay(self):
+        adb, _ = self.run_sequence(False, '빠름 · 1회 인식')
+        self.assertEqual(adb.tap.call_count, 2)
