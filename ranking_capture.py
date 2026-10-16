@@ -10,7 +10,7 @@ def save_rank_image(app,selected_id,label,path,roi,size):
         base='랭킹 · '+label;name=base;n=2
         while any(r['name']==name for r in app.records):name=f'{base} {n}';n+=1
         record['name']=name
-    record.update(template=app.registry.portable(path),roi=roi,size=size,enabled=True,kind='condition')
+    record.update(template=app.registry.portable(path),roi=roi,size=size,enabled=True,kind=existing.get('kind') if existing and existing.get('kind') in ('step','condition') else 'condition')
     # Coordinates must be picked again after a capture at a different resolution.
     if record.get('click_mode')=='fixed' and record.get('click_size')!=size:
         record.update(click_mode='center',click_point=None,click_size=None)

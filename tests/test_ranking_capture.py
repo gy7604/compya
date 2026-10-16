@@ -33,3 +33,9 @@ class CaptureTests(unittest.TestCase):
             old=app.records;app.registry.save=Mock(side_effect=OSError('disk'))
             with self.assertRaises(OSError):save_rank_image(app,None,'새 항목',Path(folder)/'b.png',[0,0,100,100],[720,1280])
             self.assertIs(app.records,old)
+
+    def test_existing_rule_step_keeps_its_role_when_replaced(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            app=self.app(folder);record=new_button('규칙 단계');record['kind']='step';app.records=[record]
+            revised=save_rank_image(app,record['id'],'교체',Path(folder)/'new.png',[0,0,100,100],[720,1280])
+            self.assertEqual(revised['kind'],'step');self.assertEqual(revised['id'],record['id'])
