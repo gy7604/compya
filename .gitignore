@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.spec
+build/
+dist/
+releases/
+logs/
+.updates/
+buttons.json
+last_settings.json
+update_result.json
+assets/buttons/
+assets/*_custom.*
+.env
+.env.*
