@@ -48,7 +48,7 @@ class RuleTests(unittest.TestCase):
         for t in range(6):m.observe({'goal':True,'pause':True},t)
         with self.assertRaises(SafetyStop):m.observe({'pause':True},13)
 
-    def runner(self, dry):
+    def runner(self, dry, progress=False):
         records,rule=fixtures()
         app=App.__new__(App)
         app.stop=threading.Event()
@@ -65,6 +65,8 @@ class RuleTests(unittest.TestCase):
                 return present,(keys.index(key)*10,100),.99 if present else .1,(720,1280)
             matcher=Mock();matcher.find.side_effect=find;return matcher
         cfg=dict(buttons=list(records.values()),rules=[rule],dry=dry,adb='adb',serial='device',wait=180)
+        if progress:
+            cfg['progress']=dict(enabled=True,watch=['normal','other'],point=[450,500],size=[720,1280],delay=.5,interval=.5)
         with patch('app.ADB',return_value=adb),patch('vision.Matcher',side_effect=factory),patch('app.time.monotonic',side_effect=range(100)):
             app.run(cfg)
         self.assertTrue(any('규칙 완료 설정' in c.args[0] for c in app.emit.call_args_list))
@@ -77,6 +79,10 @@ class RuleTests(unittest.TestCase):
     def test_rule_runner_dry_run_never_sends_taps(self):
         adb=self.runner(True)
         adb.tap.assert_not_called()
+
+    def test_progress_clicks_do_not_interrupt_rule_execution(self):
+        adb=self.runner(False,progress=True)
+        self.assertEqual([c.args[0] for c in adb.tap.call_args_list],[(30,100),(40,100),(50,100)])
 
     def test_priority_resolves_two_visible_buttons(self):
         m=ActionMachine(0,priority_order=['PLAY BALL','coach'])

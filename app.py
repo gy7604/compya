@@ -15,6 +15,7 @@ from registry import Registry
 from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
+from progress import ProgressStore, ProgressClicker, default_progress, validate_progress
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -45,8 +46,11 @@ class App:
         self.records = self.registry.load(saved)
         self.rule_store = RuleStore(ROOT)
         self.rules = self.rule_store.load(self.records)
+        self.progress_store = ProgressStore(ROOT)
+        self.progress = self.progress_store.load()
         self.manager = None
         self.rule_manager = None
+        self.progress_manager = None
         for row, (key, label, value) in enumerate(defaults):
             value = saved.get(key, value)
             if isinstance(value, (list, tuple)):
@@ -61,6 +65,7 @@ class App:
         self.fields['speed'] = tk.StringVar(value=mode if mode in MODES else DEFAULT_MODE)
         ttk.Label(form, text='인식 반응속도').grid(row=0, column=2, padx=8)
         ttk.Combobox(form, textvariable=self.fields['speed'], values=list(MODES), state='readonly', width=22).grid(row=1, column=2, padx=8)
+        ttk.Button(form,text='진행 보조 클릭 설정',command=self.manage_progress).grid(row=2,column=2,padx=8)
         ttk.Label(form, text='일반 버튼: 나타남 / 사라짐 대기 시간 제한 없음').grid(row=3, column=0, columnspan=3, sticky='w')
         self.button_summary = tk.StringVar(value=f'등록 {len(self.records)}개 / 사용 {sum(r["enabled"] for r in self.records)}개')
         ttk.Button(form, text='버튼 관리 · 추가 / 수정 / 이미지 교체', command=self.manage).grid(row=4, column=0, padx=0, pady=12)
@@ -117,7 +122,7 @@ class App:
     def install_update(self):
         if not self.next_release or self.updating:
             return
-        if self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()) or (self.rule_manager and self.rule_manager.window.winfo_exists()):
+        if self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()) or (self.rule_manager and self.rule_manager.window.winfo_exists()) or (self.progress_manager and self.progress_manager.window.winfo_exists()):
             messagebox.showinfo('업데이트', '매크로를 중지하고 버튼 관리 창을 닫은 뒤 업데이트하세요.')
             return
         if not getattr(sys, 'frozen', False) or not (ROOT/'UpdateHelper.exe').is_file():
@@ -128,6 +133,7 @@ class App:
         try:
             self.registry.save(self.records)
             self.rule_store.save(self.rules, self.records)
+            self.progress_store.save(self.progress, self.records)
             (ROOT/'last_settings.json').write_text(json.dumps({k: v.get() for k, v in self.fields.items()}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 저장 실패', str(e))
@@ -217,6 +223,16 @@ class App:
         self.logger.info(text)
         self.events.put(text)
 
+    def manage_progress(self):
+        if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
+            messagebox.showinfo('진행 보조 클릭','실행을 중지한 뒤 설정하세요.')
+            return
+        from progress_ui import ProgressManager
+        if self.progress_manager and self.progress_manager.window.winfo_exists():
+            self.progress_manager.window.lift()
+            return
+        self.progress_manager=ProgressManager(self)
+
     def start(self):
         if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
             return
@@ -229,14 +245,16 @@ class App:
             import copy
             config['buttons'] = copy.deepcopy(self.records)
             config['rules'] = copy.deepcopy(self.rules)
+            config['progress'] = copy.deepcopy(self.progress)
             validate_rules(self.rules, self.records)
-            if not any(r['enabled'] and r.get('kind', 'normal') == 'normal' for r in self.records) and not any(r['enabled'] for r in self.rules):
-                raise ValueError('일반 클릭 버튼 또는 조건 규칙을 하나 이상 켜세요.')
+            validate_progress(self.progress,self.records)
+            if not any(r['enabled'] and r.get('kind', 'normal') == 'normal' for r in self.records) and not any(r['enabled'] for r in self.rules) and not self.progress['enabled']:
+                raise ValueError('일반 클릭 버튼, 조건 규칙 또는 진행 보조 클릭을 하나 이상 켜세요.')
             config['dry'] = self.dry.get()
             if not self.confirm.get():
                 raise ValueError('게임 모드 설정 확인을 체크하세요.')
             import json
-            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules')}, ensure_ascii=False, indent=2), encoding='utf-8')
+            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules','progress')}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 확인', str(e))
             return
@@ -252,9 +270,13 @@ class App:
             from registry import validate
             validate(cfg['buttons'])
             rules = cfg.get('rules', [])
+            progress_config=cfg.get('progress',default_progress())
             validate_rules(rules, cfg['buttons'])
+            progress=ProgressClicker(progress_config,cfg['buttons'])
             referenced = {key for rule in rules if rule['enabled'] for key in
                           [rule['trigger'], rule['success']]+[s['button'] for s in rule['steps']] if key}
+            if progress_config['enabled']:
+                referenced.update(progress_config['watch'])
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
                        (r.get('kind', 'normal') == 'normal' or r['id'] in referenced)}
             if not records:
@@ -270,6 +292,8 @@ class App:
             self.emit('일반 버튼 나타남 / 사라짐 대기는 시간 제한 없이 계속합니다.')
             self.emit(f'반응속도 · 인식 {frames}회 / 추가 화면 대기 {interval:g}초 / 전환 확인 3회 유지')
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
+            if progress_config['enabled']:
+                self.emit(f'진행 보조 클릭 ON · 두 이미지 미인식 {float(progress_config["delay"]):g}초 후 / {float(progress_config["interval"]):g}초 간격 / 좌표={tuple(progress_config["point"])}')
             dimensions = None
             previous_state = None
             heartbeat = taps = 0
@@ -280,6 +304,7 @@ class App:
                 if (dimensions is not None and dimensions != size) or any(v != size for v in expected.values()):
                     raise RuntimeError('등록 이미지와 화면 해상도가 다릅니다. 현재 해상도로 다시 등록하세요.')
                 dimensions = size
+                progress.check_size(size)
                 for record in records.values():
                     if record.get('click_mode') == 'fixed':
                         click_point(record,(0,0),size)
@@ -303,6 +328,14 @@ class App:
                     label = records[action]['name']
                     mode='지정 좌표' if records[action].get('click_mode')=='fixed' else '이미지 중앙'
                     self.emit(f'{"모의 탭" if cfg["dry"] else "탭"} #{taps} {label} 좌표={point} 인식위치={matched_point} 방식={mode} 점수={score:.3f}')
+                blocked=(action is not None or machine.active is not None or machine.queued is not None or
+                         machine.normal.pending is not None or now<machine.normal.next_allowed or now<machine.next_allowed or
+                         any(results[key][0] for key in machine.normal_ids))
+                extra=progress.observe({key:result[0] for key,result in results.items()},now,blocked=blocked)
+                if extra is not None:
+                    if self.stop.is_set():break
+                    if not cfg['dry']:adb.tap(extra)
+                    self.emit(f'{"모의 보조 탭" if cfg["dry"] else "보조 탭"} #{progress.taps} 좌표={extra} · 지정한 두 이미지 모두 미인식')
                 state = machine.status
                 if previous_state != state or now-heartbeat >= 5:
                     scores = ' / '.join(f'{records[n]["name"]}={r[2]:.3f}(기준 {records[n]["threshold"]:.3f})' for n, r in results.items())
@@ -399,10 +432,11 @@ if __name__ == '__main__':
         app.manager.edit(True)
         app.manage_rules()
         app.rule_manager.edit(True)
+        app.manage_progress()
         root.update()
         (ROOT/'logs'/'selftest.json').write_text(json.dumps({
             'frozen': bool(getattr(sys, 'frozen', False)), 'template_score': score,
-            'gui': 'ok', 'capture_editor': 'ok', 'point_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok'}), encoding='utf-8')
+            'gui': 'ok', 'capture_editor': 'ok', 'point_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok', 'progress_manager': 'ok'}), encoding='utf-8')
         root.destroy()
     else:
         root.mainloop()
