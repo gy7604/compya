@@ -326,12 +326,12 @@ class App:
             if notification_config['enabled']:
                 referenced.update(notification_config['watch'])
             if ranking_config['enabled']:
-                referenced.update(ranking_config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm') if ranking_config[key])
+                referenced.update(ranking_config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm') if ranking_config.get(key))
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
                        (r.get('kind', 'normal') == 'normal' or r['id'] in referenced)}
             if not records:
                 raise ValueError('사용할 버튼이 없습니다.')
-            color_keys={ranking_config[key] for key in ('series','disabled','refresh','points','paid') if ranking_config.get(key)} if ranking_config['enabled'] else set()
+            color_keys={ranking_config[key] for key in ('series','disabled','refresh','points','paid','reward') if ranking_config.get(key)} if ranking_config['enabled'] else set()
             matchers = {key: Matcher(self.registry.resolve(r['template']), r['threshold'], r['roi'], **({'color_tolerance':25} if key in color_keys else {}))
                         for key, r in records.items()}
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
@@ -379,7 +379,7 @@ class App:
                 ranking_action=ranking.observe({key:result[0] for key,result in results.items()},now)
                 while ranking.events:self.emit(ranking.events.pop(0))
                 if ranking.finished:
-                    self.emit('랭킹 목표 횟수 완료 · 결과 화면에서 다음 연속 경기 시작 전에 중지');break
+                    self.emit('랭킹 목표 횟수 완료 · 다음 연속 경기 시작 전에 중지');break
                 if ranking.hold:
                     if ranking_action:
                         if self.stop.is_set():break
@@ -390,7 +390,7 @@ class App:
                         if ranking_action==ranking_config['proceed']:
                             machine=WorkflowMachine(records,rules,now,detection_frames=frames)
                     if now-heartbeat>=5:
-                        labels={'lobby':'무료/별 갱신 상태 확인','series':'연속 경기 대기','lineup':'라인업 경기 진행 대기','departing':'경기 화면 진입 대기','playing':'경기 진행','result_confirm':'결과 확인 버튼 대기','returning':'결과 확인 후 로비 복귀 대기'}
+                        labels={'lobby':'무료/별 갱신 상태 확인','series':'연속 경기 대기','lineup':'라인업 경기 진행 대기','departing':'경기 화면 진입 대기','playing':'경기 진행','result_confirm':'결과 확인 버튼 대기','returning':'결과 확인 후 로비 복귀 대기','reward_confirm':'15회 보상 팝업 확인 대기','reward_return':'15회 보상 수령 후 로비 확인 대기'}
                         scores=' / '.join(f'{records[key]["name"]}={results[key][2]:.3f}({"인식" if results[key][0] else "미인식"})' for key in referenced if key in results)
                         self.emit(f'랭킹 대기 · {labels[ranking.phase]} · 완료 {ranking.completed}/{ranking.target}회 · {scores}')
                         heartbeat=now

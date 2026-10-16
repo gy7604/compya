@@ -12,7 +12,7 @@ def fixture():
     records=[]
     for i,key in enumerate(KEYS):
         r=new_button(key);r.update(id=key,enabled=True,kind='condition',template=key+'.png',roi=[0,0,720,1280],click_mode='fixed',click_point=[10+i,20],click_size=[720,1280]);records.append(r)
-    config=dict(enabled=True,**{key:key for key in KEYS})
+    config=dict(default_ranking(),enabled=True,**{key:key for key in KEYS})
     return records,config
 
 def visible(*keys):return dict.fromkeys(keys,True)
@@ -114,4 +114,45 @@ class RankingTests(unittest.TestCase):
         for t in range(6):self.assertIsNone(m.observe(visible('lobby','disabled','points'),t))
     def test_points_template_requires_search_area(self):
         records,cfg=fixture();next(r for r in records if r['id']=='points')['roi']=None
+        with self.assertRaises(ValueError):validate_ranking(cfg,records)
+
+    def reward_machine(self,target=2):
+        records,cfg=fixture()
+        for key in ['reward','reward_confirm']:
+            r=new_button(key);r.update(id=key,kind='condition',template=key+'.png',enabled=True,roi=[500,1000,200,200],click_mode='fixed',click_point=[600,1100],click_size=[720,1280]);records.append(r);cfg[key]=key
+        return RankingMachine(cfg,records,target)
+    def test_reward_preempts_series_and_refresh(self):
+        m=self.reward_machine()
+        self.assertEqual(self.frames(m,visible('lobby','series','refresh','reward'),0),[None,None,'reward'])
+        for t in range(3,12):self.assertIsNone(m.observe(visible('lobby','series','reward'),t))
+        self.assertEqual(m.phase,'reward_confirm')
+    def test_reward_popup_close_and_marker_reset_before_next_game(self):
+        m=self.reward_machine()
+        self.frames(m,visible('lobby','reward'),0)
+        self.assertEqual(self.frames(m,visible('reward_confirm'),3),[None,None,'reward_confirm'])
+        for t in range(6,12):self.assertIsNone(m.observe(visible('lobby','reward','series'),t))
+        self.assertEqual(m.phase,'reward_return')
+        self.frames(m,visible('lobby','series'),12);self.assertEqual(m.phase,'lobby')
+        self.assertEqual(self.frames(m,visible('lobby','series'),15),[None,None,'series'])
+    def test_last_batch_returns_and_claims_reward_before_stopping(self):
+        m=self.reward_machine(1);self.begin(m)
+        self.frames(m,visible('result','confirm'),9);self.assertFalse(m.finished)
+        self.assertEqual(self.frames(m,visible('result','confirm'),12),[None,None,'confirm'])
+        self.frames(m,visible('lobby','reward','series'),15)
+        self.assertEqual(self.frames(m,visible('lobby','reward','series'),18),[None,None,'reward'])
+        self.frames(m,visible('reward_confirm'),21)
+        self.frames(m,visible('lobby','series'),24)
+        self.frames(m,visible('lobby','series'),27)
+        self.assertTrue(m.finished);self.assertEqual(m.completed,1)
+    def test_last_batch_without_ready_reward_stops_in_lobby(self):
+        m=self.reward_machine(1);self.begin(m)
+        self.frames(m,visible('result','confirm'),9)
+        self.frames(m,visible('result','confirm'),12)
+        self.frames(m,visible('lobby','series'),15)
+        self.frames(m,visible('lobby','series'),18)
+        self.assertTrue(m.finished)
+    def test_reward_requires_pair_and_specific_roi(self):
+        m=self.reward_machine();records=list(m.records.values());cfg=m.config
+        with self.assertRaises(ValueError):validate_ranking(dict(cfg,reward_confirm=''),records)
+        next(r for r in records if r['id']=='reward')['roi']=None
         with self.assertRaises(ValueError):validate_ranking(cfg,records)

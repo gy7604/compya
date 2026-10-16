@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def default_ranking():
-    return dict(enabled=False,lobby='',refresh='',points='',paid='',series='',disabled='',proceed='',result='',confirm='')
+    return dict(enabled=False,lobby='',refresh='',points='',paid='',series='',disabled='',proceed='',result='',confirm='',reward='',reward_confirm='')
 
 
 def validate_ranking(config,records):
@@ -12,9 +12,15 @@ def validate_ranking(config,records):
     available={r['id']:r for r in records if r['enabled'] and r['template']}
     if any(not config.get(key) for key in ('lobby','refresh','series','disabled','proceed','result','confirm')):
         raise ValueError('랭킹 로비, 무료 갱신, 연속 경기 활성·비활성, 경기 진행, 결과 제목·확인 이미지를 선택하세요.')
-    keys=[config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm') if config.get(key)]
+    keys=[config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm') if config.get(key)]
     if len(keys)!=len(set(keys)) or any(key not in available for key in keys):
         raise ValueError('랭킹 이미지는 서로 다르게 선택하고 버튼 관리에서 사용을 켜세요.')
+    if bool(config.get('reward')) != bool(config.get('reward_confirm')):
+        raise ValueError('15회 보상 수령 이미지와 보상 팝업 확인 이미지를 함께 선택하세요.')
+    if config.get('reward') and any(available[config[key]].get('click_mode')!='fixed' for key in ('reward','reward_confirm')):
+        raise ValueError('보상 수령 항목은 글러브 중앙, 보상 팝업 항목은 확인 버튼으로 클릭 위치를 각각 지정하세요.')
+    if config.get('reward') and not available[config['reward']].get('roi'):
+        raise ValueError('15회 보상은 글러브·15·수령 가능 표시를 함께 캡처하고 검색 영역을 글러브 주변으로 지정하세요.')
     if config.get('points') and not available[config['points']].get('roi'):
         raise ValueError('포인트 갱신은 갱신 버튼 안의 P 아이콘만 캡처하고 검색 영역을 해당 버튼 주변으로 지정하세요.')
     if any(available[key].get('kind','normal')=='normal' for key in keys):
@@ -38,6 +44,7 @@ class RankingMachine:
         self.config=config;self.records={r['id']:r for r in records}
         self.target=target;self.completed=0;self.phase='lobby';self.counts={};self.absent=0
         self.next_allowed=float('-inf');self.finished=False;self.events=[];self.hold=False
+        self.reward=config.get('reward','');self.reward_confirm=config.get('reward_confirm','');self.reward_absent=0;self.target_reached=False
     def stable(self,key,found):
         return bool(key) and self.counts.get(key,0)>=3
     def observe(self,found,now):
@@ -47,13 +54,18 @@ class RankingMachine:
         lobby_key,refresh,points,paid,series,disabled,proceed,result,confirm=(self.config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm'))
         for key in (lobby_key,refresh,points,paid,series,disabled,proceed,result,confirm):
             if key:self.counts[key]=self.counts.get(key,0)+1 if found.get(key,False) else 0
+        for key in (self.reward,self.reward_confirm):
+            if key:self.counts[key]=self.counts.get(key,0)+1 if found.get(key,False) else 0
+        self.reward_absent=0 if found.get(self.reward,False) else self.reward_absent+1
         lobby=found.get(lobby_key,False)
         if self.phase=='playing':
             self.hold=lobby or found.get(result,False)
             if self.stable(result,found):
                 self.completed+=1;self.events.append(f'랭킹 연속 경기 결과 확인 · 완료 {self.completed}/{self.target}회')
                 self.hold=True
-                if self.completed>=self.target:self.finished=True;return None
+                if self.completed>=self.target:
+                    self.target_reached=True
+                    if not self.reward:self.finished=True;return None
                 self.phase='result_confirm';self.counts={}
             return None
         self.hold=True
@@ -63,16 +75,29 @@ class RankingMachine:
             return None
         if now<self.next_allowed:return None
         key=None
-        if self.phase=='returning':
+        if self.phase=='reward_return':
+            if self.stable(lobby_key,found) and self.reward_absent>=3:
+                self.phase='lobby';self.counts={};self.events.append('랭킹 15회 보상 팝업 종료 · 수령 가능 표시 사라짐 확인')
+            return None
+        if self.phase=='reward_confirm':
+            if self.stable(self.reward_confirm,found):key=self.reward_confirm;self.phase='reward_return'
+        elif self.phase=='returning':
             if self.stable(lobby_key,found):self.phase='lobby';self.counts={}
             return None
-        if self.phase=='result_confirm':
+        elif self.phase=='result_confirm':
             if self.stable(result,found) and self.stable(confirm,found):key=confirm;self.phase='returning'
         elif self.phase=='lobby':
             if self.stable(lobby_key,found):
+                if self.reward and found.get(self.reward,False):
+                    if self.stable(self.reward,found):
+                        key=self.reward;self.phase='reward_confirm';self.events.append('랭킹 15회 수령 가능 보상 확인 · 글러브 클릭')
+                    else:return None
+                elif self.target_reached:
+                    if self.reward_absent>=3:self.finished=True;self.events.append('랭킹 목표 완료 · 보상 처리 후 중지')
+                    return None
                 # Positive disabled evidence is required before consuming a refresh.
                 # Any active evidence immediately vetoes refresh, even before debounce.
-                if found.get(series,False):
+                elif found.get(series,False):
                     if self.stable(series,found) and not found.get(disabled,False):
                         key=series;self.phase='lineup';self.events.append('랭킹 연속 경기 우선 · 무료 갱신 사용 안 함')
                 elif self.stable(disabled,found):
