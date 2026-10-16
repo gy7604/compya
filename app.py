@@ -9,7 +9,7 @@ import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from adb import ADB
-from engine import Settings
+from engine import Settings, SafetyStop
 from actions import ActionMachine
 from registry import Registry
 from version import VERSION
@@ -223,6 +223,7 @@ class App:
         self.worker.start()
 
     def run(self, cfg):
+        png, results, records, machine = None, {}, {}, None
         try:
             from vision import Matcher
             from registry import validate
@@ -268,6 +269,21 @@ class App:
                 self.stop.wait(0.25)
         except Exception as e:
             self.emit(f'안전 중지 · {e}')
+            if isinstance(e, SafetyStop):
+                if cfg['dry']:
+                    self.emit('모의 실행은 클릭하지 않습니다. 모의 탭 후 게임 버튼을 직접 눌러 전환을 확인하세요.')
+                else:
+                    self.emit('게임에서 버튼이 실제로 눌렸는지 확인하세요. 누르지 않았다면 등록 이미지·검색 영역을 다시 확인하세요.')
+                if png is not None and results:
+                    try:
+                        from diagnostics import write_stop_snapshot
+                        path = write_stop_snapshot(ROOT, png, records, results,
+                                                   machine.pending if machine else None, cfg['dry'])
+                        self.emit(f'중지 직전 화면 저장 · {path}')
+                        scores = ' / '.join(f'{records[n]["name"]}={r[2]:.3f} (기준 {records[n]["threshold"]:.3f})' for n, r in results.items())
+                        self.emit('마지막 인식 · ' + scores)
+                    except Exception as diagnostic_error:
+                        self.emit(f'중지 화면 저장 실패 · {diagnostic_error}')
         finally:
             self.stop.set()
             self.emit('실행 종료')

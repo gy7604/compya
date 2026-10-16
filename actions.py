@@ -16,7 +16,11 @@ class ActionMachine:
     def observe(self, present, now):
         limit = self.policies.get(self.pending, {}).get('disappear_timeout', 8) if self.pending else self.timeout
         if now-self.since >= limit:
-            raise SafetyStop(f'{self.pending or "버튼 인식"} 대기 시간 초과')
+            if self.pending:
+                name = self.policies.get(self.pending, {}).get('name', '선택한 버튼')
+                raise SafetyStop(f'"{name}" 클릭 후 {limit:g}초 내 사라짐을 확인하지 못했습니다. '
+                                 f'(연속 미감지 {self.absent}/3프레임)')
+            raise SafetyStop(f'{limit:g}초 동안 사용할 버튼을 찾지 못했습니다. 게임 화면과 사용 설정을 확인하세요.')
         if self.pending:
             self.absent = 0 if present.get(self.pending, False) else self.absent+1
             if self.absent >= 3:
