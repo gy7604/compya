@@ -4,7 +4,6 @@ import time
 import uuid
 import tkinter as tk
 from tkinter import ttk,messagebox
-from ranking import validate_ranking
 from ranking_capture import save_rank_image,save_rank_point
 
 FIELDS=[('lobby','랭킹 로비 제목'),('refresh','활성 무료 갱신'),('points','일반 포인트 P 아이콘 (항상 사용)'),
@@ -20,7 +19,7 @@ class RankingManager:
         self.draft=copy.deepcopy(app.ranking);self.values={};self.combos={}
         enabled=tk.BooleanVar(value=self.draft['enabled'])
         ttk.Checkbutton(win,text='랭킹 챌린지 연속 경기 모드 사용',variable=enabled).pack(anchor='w',padx=12,pady=8)
-        ttk.Label(win,text='등록/교체 → 게임 화면에서 영역 선택 → 저장. 클릭할 항목은 클릭 위치도 선택할 수 있습니다.\n이미지·좌표 변경은 버튼 관리에도 바로 저장됩니다. 아래 저장은 랭킹 연결 설정을 저장합니다.').pack(anchor='w',padx=12)
+        ttk.Label(win,text='미등록 항목이 있어도 저장할 수 있습니다. 필수 항목은 자동 실행 시작 때 확인합니다.\n등록/교체 → 게임 화면에서 영역 선택 → 저장. 클릭할 항목은 클릭 위치도 선택할 수 있습니다.\n이미지·좌표 변경은 버튼 관리에도 바로 저장됩니다. 아래 저장은 랭킹 연결 설정을 저장합니다.').pack(anchor='w',padx=12)
         allow_star=tk.BooleanVar(value=self.draft.get('allow_star',False))
         ttk.Checkbutton(win,text='별 재화 갱신 사용 (기본 OFF) · 포인트 갱신은 항상 사용',variable=allow_star).pack(anchor='w',padx=12,pady=5)
         container=ttk.Frame(win);container.pack(fill='both',expand=True,padx=12,pady=8)
@@ -40,14 +39,16 @@ class RankingManager:
         body.columnconfigure(1,weight=1)
         self.refresh()
         ttk.Label(body,text='활성 연속 경기 우선 → 비활성 확인 시 무료/포인트 갱신. 별 갱신은 위 체크를 켰을 때만 사용합니다.\n팝업 제목은 즉시 갱신, 결제 조건은 해당 버튼 안의 P/별 아이콘을 숫자 없이 캡처하세요.\n팝업 결제 항목의 클릭 위치는 각각 결제 버튼 중앙으로 지정해야 합니다. 활성/비활성 버튼은 배경까지 각각 캡처합니다.\n15회 보상은 글러브·15·보상 받기 표시를 함께 캡처하고 클릭 위치를 글러브 중앙으로 지정하세요.\n보상 팝업은 고유한 보상 획득 제목을 캡처하고 클릭 위치는 하단 확인 버튼으로 지정하세요.\n두 보상 항목과 각각의 클릭 위치를 함께 지정하면 보상 수령을 사용합니다.\n결과 화면을 1회로 집계합니다. 보상 수령 사용 시 목표 완료 후 로비 보상 처리까지 하고 중지합니다.\n시작마다 완료 횟수는 0으로 초기화됩니다. 모의 실행에서는 게임 버튼을 직접 눌러 화면을 전환하세요.',wraplength=1000).grid(row=len(FIELDS),column=0,columnspan=5,padx=4,pady=10,sticky='w')
-        self.status=tk.StringVar(value='랭킹 로비에서 시작하세요. 화면 캡처는 게임 버튼을 누르지 않습니다.')
+        self.status=tk.StringVar(value='프로그램을 켠 채 게임을 직접 진행하며 이미지를 추가하세요. 매크로 자동 실행 중에는 중지 후 수정합니다.')
         ttk.Label(win,textvariable=self.status,wraplength=1000).pack(anchor='w',padx=12)
         bar=ttk.Frame(win);bar.pack(fill='x',padx=12,pady=10)
         def save():
             if app.capturing:messagebox.showinfo('캡처 중','캡처가 끝난 뒤 저장하세요.',parent=win);return
             try:
                 candidate=dict(enabled=enabled.get(),allow_star=allow_star.get(),**{key:self.selected(key)['id'] if self.selected(key) else '' for key in self.values})
-                validate_ranking(candidate,app.records);app.ranking_store.save(candidate,app.records);app.ranking=candidate;win.destroy()
+                app.ranking_store.save(candidate,app.records);app.ranking=candidate
+                app.status.set('랭킹 설정 저장 완료 · 미등록 항목은 나중에 추가할 수 있습니다.')
+                win.destroy()
             except Exception as e:messagebox.showerror('랭킹 설정',str(e),parent=win)
         ttk.Button(bar,text='저장',command=save).pack(side='right')
         ttk.Button(bar,text='닫기',command=win.destroy).pack(side='right',padx=8)

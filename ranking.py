@@ -7,11 +7,23 @@ def default_ranking():
     return dict(enabled=False,lobby='',refresh='',points='',paid='',series='',disabled='',proceed='',result='',confirm='',reward='',reward_confirm='',refresh_dialog='',points_confirm='',star_confirm='',allow_star=False)
 
 
+def validate_ranking_draft(config):
+    for key in ('enabled','allow_star'):
+        if type(config.get(key,False)) is not bool:raise ValueError('랭킹 사용 설정이 올바르지 않습니다.')
+    for key in default_ranking():
+        if key not in ('enabled','allow_star') and not isinstance(config.get(key,''),str):
+            raise ValueError('랭킹 이미지 연결 설정이 올바르지 않습니다.')
+
+
 def validate_ranking(config,records):
+    validate_ranking_draft(config)
     if not config['enabled']:return
     available={r['id']:r for r in records if r['enabled'] and r['template']}
-    if any(not config.get(key) for key in ('lobby','refresh','points','series','disabled','proceed','result','confirm','refresh_dialog','points_confirm')):
-        raise ValueError('랭킹 필수 이미지와 즉시 갱신 제목·포인트 확인 이미지를 모두 등록하세요.')
+    required={'lobby':'랭킹 로비 제목','refresh':'무료 갱신','points':'포인트 갱신','series':'활성 연속 경기',
+              'disabled':'비활성 연속 경기','proceed':'라인업 경기 진행','result':'결과 제목','confirm':'결과 확인',
+              'refresh_dialog':'즉시 갱신 팝업 제목','points_confirm':'팝업 P 아이콘/결제 좌표'}
+    missing=[label for key,label in required.items() if not config.get(key)]
+    if missing:raise ValueError('설정은 저장되어 있습니다. 랭킹 자동 실행 전에 다음 항목을 등록하세요: '+', '.join(missing))
     if type(config.get('allow_star',False)) is not bool:raise ValueError('별 갱신 사용 여부가 올바르지 않습니다.')
     if config.get('allow_star') and (not config.get('paid') or not config.get('star_confirm')):
         raise ValueError('별 갱신을 켜려면 로비 별 아이콘과 팝업 별 확인 이미지를 등록하세요.')
@@ -40,7 +52,7 @@ class RankingStore:
         if self.path.exists():config.update(json.loads(self.path.read_text(encoding='utf-8')))
         return config
     def save(self,config,records):
-        validate_ranking(config,records)
+        validate_ranking_draft(config)
         temp=self.path.with_suffix('.tmp');temp.write_text(json.dumps(config,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(self.path)
 
 
