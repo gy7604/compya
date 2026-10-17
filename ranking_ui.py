@@ -39,7 +39,7 @@ class RankingManager:
         body.columnconfigure(1,weight=1)
         self.refresh()
         ttk.Label(body,text='활성 연속 경기 우선 → 비활성 확인 시 무료/포인트 갱신. 별 갱신은 위 체크를 켰을 때만 사용합니다.\n팝업 제목은 즉시 갱신, 결제 조건은 해당 버튼 안의 P/별 아이콘을 숫자 없이 캡처하세요.\n팝업 결제 항목의 클릭 위치는 각각 결제 버튼 중앙으로 지정해야 합니다. 활성/비활성 버튼은 배경까지 각각 캡처합니다.\n15회 보상은 글러브·15·보상 받기 표시를 함께 캡처하고 클릭 위치를 글러브 중앙으로 지정하세요.\n보상 팝업은 고유한 보상 획득 제목을 캡처하고 클릭 위치는 하단 확인 버튼으로 지정하세요.\n두 보상 항목과 각각의 클릭 위치를 함께 지정하면 보상 수령을 사용합니다.\n결과 화면을 1회로 집계합니다. 보상 수령 사용 시 목표 완료 후 로비 보상 처리까지 하고 중지합니다.\n시작마다 완료 횟수는 0으로 초기화됩니다. 모의 실행에서는 게임 버튼을 직접 눌러 화면을 전환하세요.',wraplength=1000).grid(row=len(FIELDS),column=0,columnspan=5,padx=4,pady=10,sticky='w')
-        self.status=tk.StringVar(value='프로그램을 켠 채 게임을 직접 진행하며 이미지를 추가하세요. 매크로 자동 실행 중에는 중지 후 수정합니다.')
+        self.status=tk.StringVar(value='로비 또는 연속 경기 결과 화면에서 시작할 수 있습니다. 프로그램을 켠 채 이미지를 추가하세요. 매크로 자동 실행 중에는 중지 후 수정합니다.')
         ttk.Label(win,textvariable=self.status,wraplength=1000).pack(anchor='w',padx=12)
         bar=ttk.Frame(win);bar.pack(fill='x',padx=12,pady=10)
         def save():

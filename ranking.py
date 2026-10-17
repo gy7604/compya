@@ -62,7 +62,7 @@ class RankingMachine:
         self.config=dict(default_ranking(),**config);config=self.config;self.records={r['id']:r for r in records}
         self.target=target;self.completed=0;self.phase='lobby';self.counts={};self.absent=0
         self.next_allowed=float('-inf');self.finished=False;self.events=[];self.hold=False
-        self.reward=config.get('reward','');self.reward_confirm=config.get('reward_confirm','');self.reward_absent=0;self.target_reached=False
+        self.reward=config.get('reward','');self.reward_confirm=config.get('reward_confirm','');self.reward_absent=0;self.target_reached=False;self.initial_sync=True
     def stable(self,key,found):
         return bool(key) and self.counts.get(key,0)>=3
     def observe(self,found,now):
@@ -77,6 +77,12 @@ class RankingMachine:
             if key:self.counts[key]=self.counts.get(key,0)+1 if found.get(key,False) else 0
         self.reward_absent=0 if found.get(self.reward,False) else self.reward_absent+1
         lobby=found.get(lobby_key,False)
+        if self.initial_sync and self.phase=='lobby' and found.get(result,False):
+            self.hold=True
+            if self.stable(result,found) and self.stable(confirm,found):
+                self.initial_sync=False;self.phase='result_confirm';self.counts={}
+                self.events.append('시작 시 기존 결과 화면 확인 · 확인 후 로비로 복귀 (이전 결과는 목표 횟수 집계 제외)')
+            return None
         if self.phase=='playing':
             self.hold=lobby or found.get(result,False)
             if self.stable(result,found):
@@ -140,6 +146,7 @@ class RankingMachine:
         elif self.phase=='series' and self.stable(series,found):key=series;self.phase='lineup'
         elif self.phase=='lineup' and self.stable(proceed,found):key=proceed;self.phase='departing';self.absent=0
         if key:
+            self.initial_sync=False
             self.next_allowed=now+max(2.,self.records[key]['cooldown'])
             self.counts={}
         return key

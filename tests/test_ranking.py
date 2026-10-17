@@ -209,3 +209,19 @@ class RankingTests(unittest.TestCase):
             app.run(dict(buttons=records,rules=[],ranking=cfg,games=1,dry=False,adb='adb',serial='device'))
         self.assertEqual([c.args[0] for c in adb.tap.call_args_list],[(12,20),(20,20),(14,20),(16,20)])
         self.assertTrue(any('목표 횟수 완료' in c.args[0] for c in app.emit.call_args_list))
+
+    def test_start_from_existing_result_returns_without_counting_previous_batch(self):
+        m=self.machine(1)
+        self.frames(m,visible('result','confirm'),0)
+        self.assertEqual(m.phase,'result_confirm');self.assertEqual(m.completed,0)
+        self.assertEqual(self.frames(m,visible('result','confirm'),3),[None,None,'confirm'])
+        self.frames(m,visible('lobby','series'),6)
+        self.begin(m,9)
+        self.frames(m,visible('result','confirm'),18)
+        self.assertTrue(m.finished);self.assertEqual(m.completed,1)
+    def test_startup_result_requires_title_and_confirm_and_cannot_click_lobby_behind_it(self):
+        m=self.machine()
+        for t in range(6):self.assertIsNone(m.observe(visible('result','lobby','series'),t))
+        self.assertEqual(m.phase,'lobby');self.assertTrue(m.hold)
+        self.frames(m,visible('result','confirm'),6)
+        self.assertEqual(m.phase,'result_confirm')
