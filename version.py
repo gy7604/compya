@@ -1,3 +1,3 @@
-VERSION = '1.9.2'
+VERSION = '2.0.0'
 REPOSITORY = 'gy7604/compya'
 UPDATE_ASSET = 'V26Macro_Windows.zip'

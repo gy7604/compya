@@ -15,6 +15,7 @@ from registry import Registry
 from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
+from recovery import RecoveryStore,RecoveryMachine,default_recovery,validate_recovery
 from ranking import RankingStore, RankingMachine, default_ranking, validate_ranking
 from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
 from progress import ProgressStore, ProgressClicker, default_progress, validate_progress
@@ -56,6 +57,9 @@ class App:
         self.ranking_store=RankingStore(ROOT)
         self.ranking=self.ranking_store.load()
         self.ranking_manager=None
+        self.recovery_store=RecoveryStore(ROOT)
+        self.recovery=self.recovery_store.load()
+        self.recovery_manager=None
         self.manager = None
         self.rule_manager = None
         self.progress_manager = None
@@ -80,6 +84,7 @@ class App:
         ttk.Button(form, text='버튼 관리 · 추가 / 수정 / 이미지 교체', command=self.manage).grid(row=4, column=0, padx=0, pady=12)
         ttk.Label(form, textvariable=self.button_summary).grid(row=4, column=1, sticky='w')
         ttk.Button(form, text='조건 규칙 관리', command=self.manage_rules).grid(row=4, column=2, padx=8)
+        ttk.Button(form,text='자동 재접속 · 광고 닫기 설정',command=self.manage_recovery).grid(row=8,column=0,columnspan=2,sticky='w',pady=5)
         self.capturing = False
         self.dry = tk.BooleanVar(value=True)
         self.confirm = tk.BooleanVar(value=False)
@@ -132,7 +137,7 @@ class App:
     def install_update(self):
         if not self.next_release or self.updating:
             return
-        if (self.ranking_manager and self.ranking_manager.window.winfo_exists()) or (self.notification_manager and self.notification_manager.window.winfo_exists()) or self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()) or (self.rule_manager and self.rule_manager.window.winfo_exists()) or (self.progress_manager and self.progress_manager.window.winfo_exists()):
+        if (self.recovery_manager and self.recovery_manager.window.winfo_exists()) or (self.ranking_manager and self.ranking_manager.window.winfo_exists()) or (self.notification_manager and self.notification_manager.window.winfo_exists()) or self.capturing or (self.worker and self.worker.is_alive()) or (self.manager and self.manager.window.winfo_exists()) or (self.rule_manager and self.rule_manager.window.winfo_exists()) or (self.progress_manager and self.progress_manager.window.winfo_exists()):
             messagebox.showinfo('업데이트', '매크로를 중지하고 버튼 관리 창을 닫은 뒤 업데이트하세요.')
             return
         if not getattr(sys, 'frozen', False) or not (ROOT/'UpdateHelper.exe').is_file():
@@ -146,6 +151,7 @@ class App:
             self.progress_store.save(self.progress, self.records)
             self.notification_store.save(self.notifications,self.records)
             self.ranking_store.save(self.ranking,self.records)
+            self.recovery_store.save(self.recovery)
             (ROOT/'last_settings.json').write_text(json.dumps({k: v.get() for k, v in self.fields.items()}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 저장 실패', str(e))
@@ -245,6 +251,14 @@ class App:
             return
         self.progress_manager=ProgressManager(self)
 
+    def manage_recovery(self):
+        if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
+            messagebox.showinfo('재접속 설정','실행을 중지한 뒤 설정하세요.');return
+        from recovery_ui import RecoveryManager
+        if self.recovery_manager and self.recovery_manager.window.winfo_exists():
+            self.recovery_manager.window.lift();return
+        self.recovery_manager=RecoveryManager(self)
+
     def manage_ranking(self):
         if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
             messagebox.showinfo('랭킹 챌린지','실행을 중지한 뒤 설정하세요.');return
@@ -286,6 +300,9 @@ class App:
             config['progress'] = copy.deepcopy(self.progress)
             config['notifications'] = copy.deepcopy(self.notifications)
             config['ranking']=copy.deepcopy(self.ranking)
+            config['recovery']=copy.deepcopy(self.recovery)
+            validate_recovery(self.recovery,self.records)
+            if self.recovery['enabled'] and not self.ranking['enabled']:raise ValueError('자동 랭킹 복귀를 사용하려면 랭킹 모드를 켜세요.')
             validate_ranking(self.ranking,self.records)
             validate_notifications(self.notifications,self.records)
             validate_rules(self.rules, self.records)
@@ -296,7 +313,7 @@ class App:
             if not self.confirm.get():
                 raise ValueError('게임 모드 설정 확인을 체크하세요.')
             import json
-            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules','progress','notifications','ranking')}, ensure_ascii=False, indent=2), encoding='utf-8')
+            (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules','progress','notifications','ranking','recovery')}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             messagebox.showerror('설정 확인', str(e))
             return
@@ -317,6 +334,9 @@ class App:
             notifier=NotificationDetector(notification_config,cfg['buttons'])
             ranking_config=cfg.get('ranking',default_ranking())
             ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
+            recovery_config=cfg.get('recovery',default_recovery())
+            recovery=RecoveryMachine(recovery_config,cfg['buttons'])
+            last_process_poll=float('-inf')
             validate_rules(rules, cfg['buttons'])
             progress=ProgressClicker(progress_config,cfg['buttons'])
             referenced = {key for rule in rules if rule['enabled'] for key in
@@ -327,6 +347,8 @@ class App:
                 referenced.update(notification_config['watch'])
             if ranking_config['enabled']:
                 referenced.update(ranking_config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm','refresh_dialog','points_confirm','star_confirm') if ranking_config.get(key))
+            if recovery_config['enabled']:
+                referenced.update([recovery_config['goal']]+recovery_config['steps']+recovery_config['popups'])
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
                        (r.get('kind', 'normal') == 'normal' or r['id'] in referenced)}
             if not records:
@@ -350,7 +372,26 @@ class App:
             previous_state = None
             heartbeat = taps = 0
             while not self.stop.is_set():
+                if recovery_config['enabled']:
+                    poll_now=time.monotonic()
+                    if poll_now-last_process_poll>=2:
+                        last_process_poll=poll_now
+                        launch=recovery.poll(adb.app_running(recovery_config['package']),poll_now)
+                        while recovery.events:self.emit(recovery.events.pop(0))
+                        if launch:
+                            if self.stop.is_set():break
+                            if not cfg['dry']:adb.launch_app(recovery_config['package'])
+                            self.emit('모의 게임 재실행 · 실제 실행 안 함' if cfg['dry'] else '게임 실행 요청 전송 · 접속 화면 대기')
+                    if not recovery.running:
+                        self.stop.wait(.2);continue
                 png = adb.screenshot()
+                if recovery_config['enabled'] and recovery.active:
+                    import cv2,numpy as np
+                    recovery_screen=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_GRAYSCALE)
+                    if recovery_screen is None:raise RuntimeError('ADB 화면 PNG 해독 실패')
+                    recovery_size=(recovery_screen.shape[1],recovery_screen.shape[0])
+                    if any(v!=recovery_size for v in expected.values()):
+                        self.stop.wait(.2);continue
                 results = {name: matcher.find(png) for name, matcher in matchers.items()}
                 size = next(iter(results.values()))[3]
                 if (dimensions is not None and dimensions != size) or any(v != size for v in expected.values()):
@@ -363,6 +404,26 @@ class App:
                 if self.stop.is_set():
                     break
                 now = time.monotonic()
+                recovery_action=recovery.observe({key:result[0] for key,result in results.items()},now)
+                while recovery.events:self.emit(recovery.events.pop(0))
+                if recovery.restored:
+                    completed=ranking.completed;target_reached=ranking.target_reached
+                    ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
+                    ranking.completed=completed;ranking.target_reached=target_reached
+                    machine=WorkflowMachine(records,rules,now,detection_frames=frames)
+                    progress=ProgressClicker(progress_config,cfg['buttons'])
+                    self.emit(f'재접속 복구 완료 · 연속 경기 완료 {completed}/{ranking.target}회 유지')
+                if recovery.hold:
+                    if recovery_action:
+                        if self.stop.is_set():break
+                        _,matched_point,score,_=results[recovery_action]
+                        point=click_point(records[recovery_action],matched_point,size)
+                        if not cfg['dry']:adb.tap(point)
+                        self.emit(f'{"모의 복구 탭" if cfg["dry"] else "복구 탭"} {records[recovery_action]["name"]} 좌표={point} 점수={score:.3f}')
+                    if now-heartbeat>=5:
+                        self.emit(f'재접속 대기 · 단계 {min(recovery.index+1,len(recovery_config["steps"]))}/{len(recovery_config["steps"])} · 광고/진입 이미지 확인')
+                        heartbeat=now
+                    self.stop.wait(max(.1,interval));continue
                 hits=notifier.observe({key:result[0] for key,result in results.items()})
                 if hits:
                     names=', '.join(records[key]['name'] for key in hits)
@@ -526,10 +587,11 @@ if __name__ == '__main__':
         app.manage_progress()
         app.manage_notifications()
         app.manage_ranking()
+        app.manage_recovery()
         root.update()
         (ROOT/'logs'/'selftest.json').write_text(json.dumps({
             'frozen': bool(getattr(sys, 'frozen', False)), 'template_score': score,
-            'gui': 'ok', 'capture_editor': 'ok', 'point_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok', 'progress_manager': 'ok', 'notification_manager': 'ok', 'ranking_manager': 'ok'}), encoding='utf-8')
+            'gui': 'ok', 'capture_editor': 'ok', 'point_editor': 'ok', 'button_manager': 'ok', 'rule_manager': 'ok', 'progress_manager': 'ok', 'notification_manager': 'ok', 'ranking_manager': 'ok', 'recovery_manager': 'ok'}), encoding='utf-8')
         root.destroy()
     else:
         root.mainloop()
