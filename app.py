@@ -391,6 +391,10 @@ class App:
                     if recovery_screen is None:raise RuntimeError('ADB 화면 PNG 해독 실패')
                     recovery_size=(recovery_screen.shape[1],recovery_screen.shape[0])
                     if any(v!=recovery_size for v in expected.values()):
+                        orientation_now=time.monotonic()
+                        if orientation_now-heartbeat>=5:
+                            self.emit(f'재접속 화면 해상도 전환 대기 · 현재 {recovery_size}')
+                            heartbeat=orientation_now
                         self.stop.wait(.2);continue
                 results = {name: matcher.find(png) for name, matcher in matchers.items()}
                 size = next(iter(results.values()))[3]
@@ -421,7 +425,9 @@ class App:
                         if not cfg['dry']:adb.tap(point)
                         self.emit(f'{"모의 복구 탭" if cfg["dry"] else "복구 탭"} {records[recovery_action]["name"]} 좌표={point} 점수={score:.3f}')
                     if now-heartbeat>=5:
-                        self.emit(f'재접속 대기 · 단계 {min(recovery.index+1,len(recovery_config["steps"]))}/{len(recovery_config["steps"])} · 광고/진입 이미지 확인')
+                        recovery_keys=[recovery_config['goal']]+recovery_config['steps']+recovery_config['popups']
+                        recovery_scores=' / '.join(f'{records[key]["name"]}={results[key][2]:.3f}({"인식" if results[key][0] else "미인식"})' for key in recovery_keys)
+                        self.emit(f'재접속 대기 · 단계 {min(recovery.index+1,len(recovery_config["steps"]))}/{len(recovery_config["steps"])} · {recovery_scores}')
                         heartbeat=now
                     self.stop.wait(max(.1,interval));continue
                 hits=notifier.observe({key:result[0] for key,result in results.items()})
