@@ -28,6 +28,32 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             RecoveryMachine(recovery_for_mode(saved, True), [])
 
+    def test_league_route_is_opt_in_and_preserves_legacy_ranking(self):
+        records,cfg=fixture()
+        cfg['target']='league'
+        self.assertTrue(recovery_for_mode(cfg,False)['enabled'])
+        self.assertFalse(recovery_for_mode(cfg,True)['enabled'])
+        records[2]['kind']='normal'
+        validate_recovery(cfg,records)
+        cfg['target']='unknown'
+        with self.assertRaises(ValueError):validate_draft(cfg)
+
+    def test_league_playball_mode_resume_route(self):
+        records,cfg=fixture()
+        for record,key in zip(records[:3],['playball','league','resume']):
+            record['id']=key
+        records.append(dict(records[0],id='ingame',kind='normal'))
+        cfg.update(target='league',goal='ingame',steps=['playball','league','resume'],popups=[])
+        m=RecoveryMachine(cfg,records)
+        m.poll(False,0);self.assertTrue(m.poll(False,2));m.poll(True,3)
+        actions=[]
+        for t in range(3,30):
+            key='playball' if t<8 else 'league' if t<14 else 'resume' if t<20 else 'ingame'
+            action=m.observe(visible(key),t)
+            if action:actions.append(action)
+        self.assertEqual(actions,['playball','league','resume'])
+        self.assertFalse(m.active)
+
     def machine(self):
         records,cfg=fixture();return RecoveryMachine(cfg,records)
     def frames(self,m,found,start):return [m.observe(found,start+i) for i in range(3)]

@@ -7,9 +7,10 @@ from engine import SafetyStop
 PACKAGE='com.com2us.futurecpb.android.google.global.normal'
 
 def default_recovery():
-    return dict(enabled=False,package=PACKAGE,goal='',steps=[],popups=[],max_launches=3)
+    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],max_launches=3)
 
 def validate_draft(config):
+    if config.get('target','ranking') not in ('ranking','league'):raise ValueError('복귀 대상 모드를 확인하세요.')
     if type(config.get('enabled')) is not bool:raise ValueError('재접속 사용 설정이 올바르지 않습니다.')
     if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+',config.get('package','')):raise ValueError('게임 앱 패키지 이름이 올바르지 않습니다.')
     if type(config.get('max_launches')) is not int or not 1<=config['max_launches']<=10:raise ValueError('게임 재실행 한도는 1~10회입니다.')
@@ -20,20 +21,21 @@ def validate_draft(config):
 def validate_recovery(config,records):
     validate_draft(config)
     if not config['enabled']:return
-    if not config['goal'] or not config['steps']:raise ValueError('재접속 완료 이미지와 타이틀부터 랭킹까지 진입 순서를 등록하세요.')
+    if not config['goal'] or not config['steps']:raise ValueError('재접속 완료 이미지와 접속부터 목표 모드까지 진입 순서를 등록하세요.')
     refs=[config['goal']]+config['steps']+config['popups']
     available={r['id']:r for r in records if r['enabled'] and r['template']}
     if len(refs)!=len(set(refs)):raise ValueError('복구 완료·진입 단계·팝업 이미지는 서로 다르게 등록하세요.')
     for key in refs:
         r=available.get(key)
-        if not r or r.get('kind','normal')=='normal':raise ValueError('재접속 이미지는 감지 전용 또는 규칙 전용으로 등록하고 사용을 켜세요.')
+        if not r or (key!=config['goal'] and r.get('kind','normal')=='normal'):raise ValueError('재접속 이미지는 감지 전용 또는 규칙 전용으로 등록하고 사용을 켜세요.')
     for key in config['popups']:
         if available[key].get('click_mode')!='fixed':raise ValueError('광고는 고유한 팝업 이미지를 등록하고 닫기 클릭 위치를 지정하세요.')
 
 def recovery_for_mode(config, ranking_enabled):
-    """Keep saved ranking routes, but never require them for ordinary league play."""
+    """Only activate routes explicitly configured for the running mode."""
     effective = dict(config)
-    if not ranking_enabled:
+    mode='ranking' if ranking_enabled else 'league'
+    if config.get('target','ranking') != mode:
         effective['enabled'] = False
     return effective
 

@@ -312,8 +312,8 @@ class App:
             config['ranking']=copy.deepcopy(self.ranking)
             config['recovery']=recovery_for_mode(copy.deepcopy(self.recovery),self.ranking['enabled'])
             validate_recovery(config['recovery'],self.records)
-            if self.recovery['enabled'] and not self.ranking['enabled']:
-                self.emit('일반 리그 모드 · 랭킹 자동 복귀는 사용하지 않습니다. 복귀 이미지 없이 실행합니다.')
+            if self.recovery['enabled'] and not config['recovery']['enabled']:
+                self.emit('현재 모드와 복귀 대상이 달라 자동 재접속은 사용하지 않습니다. 일반 진행은 계속합니다.')
             validate_ranking(self.ranking,self.records)
             validate_notifications(self.notifications,self.records)
             validate_rules(self.rules, self.records)
@@ -438,7 +438,10 @@ class App:
                     ranking.completed=completed;ranking.target_reached=target_reached
                     machine=WorkflowMachine(records,rules,now,detection_frames=frames)
                     progress=ProgressClicker(progress_config,cfg['buttons'])
-                    self.emit(f'재접속 복구 완료 · 연속 경기 완료 {completed}/{ranking.target}회 유지')
+                    if ranking_config['enabled']:
+                        self.emit(f'재접속 복구 완료 · 연속 경기 완료 {completed}/{ranking.target}회 유지')
+                    else:
+                        self.emit(f'리그 복귀 완료 · 이번 실행 완료 {counter.completed}경기 유지 · 경기 진행 재개')
                 if recovery.hold:
                     if recovery_action:
                         if self.stop.is_set():break
