@@ -15,7 +15,7 @@ from registry import Registry
 from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
-from recovery import RecoveryStore,RecoveryMachine,default_recovery,validate_recovery
+from recovery import RecoveryStore,RecoveryMachine,default_recovery,validate_recovery,recovery_for_mode
 from ranking import RankingStore, RankingMachine, default_ranking, validate_ranking
 from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
 from progress import ProgressStore, ProgressClicker, default_progress, validate_progress
@@ -300,9 +300,10 @@ class App:
             config['progress'] = copy.deepcopy(self.progress)
             config['notifications'] = copy.deepcopy(self.notifications)
             config['ranking']=copy.deepcopy(self.ranking)
-            config['recovery']=copy.deepcopy(self.recovery)
-            validate_recovery(self.recovery,self.records)
-            if self.recovery['enabled'] and not self.ranking['enabled']:raise ValueError('자동 랭킹 복귀를 사용하려면 랭킹 모드를 켜세요.')
+            config['recovery']=recovery_for_mode(copy.deepcopy(self.recovery),self.ranking['enabled'])
+            validate_recovery(config['recovery'],self.records)
+            if self.recovery['enabled'] and not self.ranking['enabled']:
+                self.emit('일반 리그 모드 · 랭킹 자동 복귀는 사용하지 않습니다. 복귀 이미지 없이 실행합니다.')
             validate_ranking(self.ranking,self.records)
             validate_notifications(self.notifications,self.records)
             validate_rules(self.rules, self.records)
@@ -334,7 +335,7 @@ class App:
             notifier=NotificationDetector(notification_config,cfg['buttons'])
             ranking_config=cfg.get('ranking',default_ranking())
             ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
-            recovery_config=cfg.get('recovery',default_recovery())
+            recovery_config=recovery_for_mode(cfg.get('recovery',default_recovery()),ranking_config['enabled'])
             recovery=RecoveryMachine(recovery_config,cfg['buttons'])
             last_process_poll=float('-inf')
             validate_rules(rules, cfg['buttons'])

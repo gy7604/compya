@@ -13,7 +13,7 @@ class RecoveryManager:
         win.geometry(f'{min(1050,win.winfo_screenwidth()-80)}x{min(850,win.winfo_screenheight()-100)}')
         draft=copy.deepcopy(app.recovery);self.routes=draft['steps'];self.popups=draft['popups'];self.trees={}
         enabled=tk.BooleanVar(value=draft['enabled']);package=tk.StringVar(value=draft['package']);limit=tk.StringVar(value=str(draft['max_launches']))
-        ttk.Checkbutton(win,text='게임 종료 시 자동 재실행 및 모드 복귀 사용',variable=enabled).pack(anchor='w',padx=12,pady=7)
+        ttk.Checkbutton(win,text='랭킹 모드에서 게임 종료 시 자동 재실행 및 복귀 사용',variable=enabled).pack(anchor='w',padx=12,pady=7)
         row=ttk.Frame(win);row.pack(fill='x',padx=12)
         ttk.Label(row,text='게임 패키지 ').pack(side='left');ttk.Entry(row,textvariable=package,width=60).pack(side='left')
         ttk.Label(row,text=' 재실행 한도 ').pack(side='left');ttk.Entry(row,textvariable=limit,width=4).pack(side='left')
@@ -32,7 +32,7 @@ class RecoveryManager:
             controls=ttk.Frame(frame);controls.pack(fill='x')
             for text,fn in [('선택 이미지 추가',lambda k=kind:self.add(k)),('새 이미지 캡처',lambda k=kind:self.capture(k,False)),('선택 교체',lambda k=kind:self.capture(k,True)),('클릭 위치',lambda k=kind:self.point(k)),('삭제',lambda k=kind:self.move(k,None)),('위로',lambda k=kind:self.move(k,-1)),('아래로',lambda k=kind:self.move(k,1))]:
                 ttk.Button(controls,text=text,command=fn).pack(side='left',padx=2,pady=4)
-        ttk.Label(win,text='모드 복귀 순서 예: 터치하여 시작 → 메인 로비의 게임 메뉴 → 랭킹 챌린지. 실제 화면에 맞춰 등록하세요.\n광고는 고유한 팝업 제목/그림을 캡처하고 닫기 X의 클릭 위치를 지정하세요. 공통 X만 등록하지 마세요.\n모든 이미지는 감지 전용/규칙 전용으로 사용 ON. 미완성이어도 저장 가능하며 실행할 때 검사합니다.\n재접속 중 일반 클릭은 보류하고, 복귀 후 연속 경기 완료 횟수를 보존합니다. 진행 중이던 미완료 묶음은 집계하지 않습니다.\n이 기능은 게임 앱 종료를 감지합니다. LDPlayer 자체 종료·ADB 연결 실패·게임 멈춤은 자동 복구하지 않습니다.',wraplength=1000).pack(anchor='w',padx=12,pady=6)
+        ttk.Label(win,text='일반 리그에서는 이 설정을 무시하며 복귀 이미지를 등록하지 않아도 실행됩니다.\n모드 복귀 순서 예: 터치하여 시작 → 메인 로비의 게임 메뉴 → 랭킹 챌린지. 실제 화면에 맞춰 등록하세요.\n광고는 고유한 팝업 제목/그림을 캡처하고 닫기 X의 클릭 위치를 지정하세요. 공통 X만 등록하지 마세요.\n모든 이미지는 감지 전용/규칙 전용으로 사용 ON. 미완성이어도 저장 가능하며 실행할 때 검사합니다.\n재접속 중 일반 클릭은 보류하고, 복귀 후 연속 경기 완료 횟수를 보존합니다. 진행 중이던 미완료 묶음은 집계하지 않습니다.\n이 기능은 게임 앱 종료를 감지합니다. LDPlayer 자체 종료·ADB 연결 실패·게임 멈춤은 자동 복구하지 않습니다.',wraplength=1000).pack(anchor='w',padx=12,pady=6)
         self.status=tk.StringVar(value='이미지를 캡처하는 동안 실제 게임을 클릭하지 않습니다.')
         ttk.Label(win,textvariable=self.status).pack(anchor='w',padx=12)
         def save():

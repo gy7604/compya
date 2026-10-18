@@ -17,6 +17,17 @@ def fixture():
 def visible(*keys):return dict.fromkeys(keys,True)
 
 class RecoveryTests(unittest.TestCase):
+    def test_league_ignores_incomplete_enabled_ranking_recovery(self):
+        saved = dict(default_recovery(), enabled=True)
+        effective = recovery_for_mode(saved, False)
+        machine = RecoveryMachine(effective, [])
+        self.assertFalse(machine.poll(False, 0))
+        self.assertIsNone(machine.observe({}, 1))
+        self.assertFalse(machine.hold)
+        self.assertTrue(saved['enabled'])
+        with self.assertRaises(ValueError):
+            RecoveryMachine(recovery_for_mode(saved, True), [])
+
     def machine(self):
         records,cfg=fixture();return RecoveryMachine(cfg,records)
     def frames(self,m,found,start):return [m.observe(found,start+i) for i in range(3)]

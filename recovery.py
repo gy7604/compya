@@ -30,6 +30,13 @@ def validate_recovery(config,records):
     for key in config['popups']:
         if available[key].get('click_mode')!='fixed':raise ValueError('광고는 고유한 팝업 이미지를 등록하고 닫기 클릭 위치를 지정하세요.')
 
+def recovery_for_mode(config, ranking_enabled):
+    """Keep saved ranking routes, but never require them for ordinary league play."""
+    effective = dict(config)
+    if not ranking_enabled:
+        effective['enabled'] = False
+    return effective
+
 class RecoveryStore:
     def __init__(self,root):self.path=Path(root)/'recovery.json'
     def load(self):
