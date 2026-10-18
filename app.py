@@ -15,6 +15,7 @@ from registry import Registry
 from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
+from league_count import LeagueCounter
 from recovery import RecoveryStore,RecoveryMachine,default_recovery,validate_recovery,recovery_for_mode
 from ranking import RankingStore, RankingMachine, default_ranking, validate_ranking
 from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
@@ -92,6 +93,15 @@ class App:
         ttk.Checkbutton(form, text='게임에서 타격 OFF · 투구 ON · 풀 플레이를 직접 설정했습니다.', variable=self.confirm).grid(row=6, column=0, columnspan=3, sticky='w')
         ttk.Label(form,text='랭킹: 연속 경기 결과 화면을 1회로 집계 · 시작마다 0회로 초기화').grid(row=7,column=0,columnspan=2,sticky='w')
         ttk.Button(form,text='랭킹 챌린지 설정',command=self.manage_ranking).grid(row=7,column=2,padx=8)
+        for row,key,label,preferred in [(9,'league_start','리그 집계 · 경기 중 이미지','포수리드'),(10,'league_result','리그 집계 · 경기 결과 이미지','경기결과 다음')]:
+            initial=saved.get(key,next((r['name'] for r in self.records if r['name']==preferred),'미사용'))
+            self.fields[key]=tk.StringVar(value=initial)
+            ttk.Label(form,text=label).grid(row=row,column=0,sticky='w')
+            combo=ttk.Combobox(form,textvariable=self.fields[key],state='readonly',width=38)
+            combo.configure(values=['미사용']+[r['name'] for r in self.records],postcommand=lambda c=combo:c.configure(values=['미사용']+[r['name'] for r in self.records]))
+            combo.grid(row=row,column=1,sticky='w')
+        self.league_count_text=tk.StringVar(value='이번 실행 · 리그 완료 0경기 (시작마다 초기화)')
+        ttk.Label(root,textvariable=self.league_count_text).pack(anchor='w',padx=12,pady=3)
         update_bar = ttk.Frame(root)
         update_bar.pack(fill='x', padx=12, pady=5)
         self.update_status = tk.StringVar(value=f'현재 v{VERSION} · 시작 시 업데이트 확인')
@@ -310,6 +320,12 @@ class App:
             validate_progress(self.progress,self.records)
             if not any(r['enabled'] and r.get('kind', 'normal') == 'normal' for r in self.records) and not any(r['enabled'] for r in self.rules) and not self.progress['enabled'] and not self.notifications['enabled'] and not self.ranking['enabled']:
                 raise ValueError('일반 클릭 버튼, 조건 규칙 또는 진행 보조 클릭을 하나 이상 켜세요.')
+            if not self.ranking['enabled']:
+                chosen=[config['league_start'],config['league_result']]
+                if chosen[0]!='미사용' and chosen[1]!='미사용':
+                    available={r['name'] for r in self.records if r['enabled'] and r['template']}
+                    if any(name not in available for name in chosen) or chosen[0]==chosen[1]:
+                        raise ValueError('경기 집계에는 사용 중인 서로 다른 경기 중/결과 이미지를 선택하세요. 미사용으로 두면 집계 없이 실행합니다.')
             config['dry'] = self.dry.get()
             if not self.confirm.get():
                 raise ValueError('게임 모드 설정 확인을 체크하세요.')
@@ -340,8 +356,13 @@ class App:
             last_process_poll=float('-inf')
             validate_rules(rules, cfg['buttons'])
             progress=ProgressClicker(progress_config,cfg['buttons'])
+            count_ids={r['name']:r['id'] for r in cfg['buttons'] if r['enabled'] and r['template']}
+            counter=LeagueCounter(count_ids.get(cfg.get('league_start',''),''),count_ids.get(cfg.get('league_result',''),''),frames=speed_settings(cfg.get('speed',DEFAULT_MODE))[0])
+            count_enabled=not ranking_config['enabled'] and bool(counter.start and counter.result)
+            if hasattr(self,'events'):self.events.put(('league_count',0,cfg['dry'],count_enabled))
             referenced = {key for rule in rules if rule['enabled'] for key in
                           [rule['trigger'], rule['success']]+[s['button'] for s in rule['steps']] if key}
+            if count_enabled:referenced.update([counter.start,counter.result])
             if progress_config['enabled']:
                 referenced.update(progress_config['watch'])
             if notification_config['enabled']:
@@ -431,6 +452,9 @@ class App:
                         self.emit(f'재접속 대기 · 단계 {min(recovery.index+1,len(recovery_config["steps"]))}/{len(recovery_config["steps"])} · {recovery_scores}')
                         heartbeat=now
                     self.stop.wait(max(.1,interval));continue
+                if count_enabled and counter.observe({key:result[0] for key,result in results.items()}):
+                    self.events.put(('league_count',counter.completed,cfg['dry'],True))
+                    self.emit(f'{"모의 집계" if cfg["dry"] else "리그 경기 완료"} · 이번 실행 {counter.completed}경기')
                 hits=notifier.observe({key:result[0] for key,result in results.items()})
                 if hits:
                     names=', '.join(records[key]['name'] for key in hits)
@@ -529,6 +553,10 @@ class App:
             except queue.Empty:
                 break
             if isinstance(msg, tuple):
+                if msg[0]=='league_count':
+                    if not self.closing:
+                        self.league_count_text.set((f'{"모의 집계" if msg[2] else "이번 실행"} · 리그 완료 {msg[1]}경기 (시작마다 초기화)') if msg[3] else '리그 경기 집계 미사용 · 경기 중/결과 이미지를 선택하세요.')
+                    continue
                 if msg[0]=='notification_test':
                     if not self.closing and msg[1].window.winfo_exists():msg[1].test_finished(msg[2])
                     continue
