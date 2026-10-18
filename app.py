@@ -384,6 +384,10 @@ class App:
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
             adb = ADB(cfg['adb'], cfg['serial'])
             adb.connect()
+            player_restart=None
+            if watch_enabled and recovery_config.get('restart_player',True):
+                from player_restart import PlayerRestart
+                player_restart=PlayerRestart(recovery_config.get('player_console',''),recovery_config.get('player_index',0),adb,self.stop)
             frames, interval = speed_settings(cfg.get('speed', DEFAULT_MODE))
             machine = WorkflowMachine(records, rules, time.monotonic(), detection_frames=frames)
             self.emit('시작 · ' + ('모의 실행' if cfg['dry'] else '실제 탭 전송'))
@@ -421,13 +425,17 @@ class App:
                         self.emit(f'멈춤 감지 화면 저장 · {diagnostic}')
                         if self.stop.is_set():break
                         if cfg['dry']:
-                            self.emit('모의 멈춤 복구 · 게임 강제 종료/재실행 안 함')
+                            self.emit('모의 멈춤 복구 · LDPlayer/게임 종료 및 재실행 안 함')
                         elif recovery.restart_stalled(time.monotonic()):
                             if self.stop.is_set():break
-                            adb.stop_app(recovery_config['package'])
+                            if player_restart:
+                                self.emit(f'멈춤 복구 · LDPlayer {player_restart.index}번 재시작 · 부팅/ADB 연결 대기')
+                                if not player_restart.restart():break
+                            else:
+                                adb.stop_app(recovery_config['package'])
                             if self.stop.is_set():break
                             adb.launch_app(recovery_config['package'])
-                            self.emit('멈춤 복구 · 게임만 강제 종료 후 재실행 · 등록 경로로 복귀 대기')
+                            self.emit('멈춤 복구 · 게임 실행 · 등록 경로로 복귀 대기')
                         watchdog.reset()
                         self.stop.wait(max(.1,interval));continue
                 if recovery_config['enabled'] and recovery.active:

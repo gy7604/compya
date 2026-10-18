@@ -7,10 +7,12 @@ from engine import SafetyStop
 PACKAGE='com.com2us.futurecpb.android.google.global.normal'
 
 def default_recovery():
-    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],max_launches=3,stall_enabled=False,stall_seconds=180)
+    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],max_launches=3,stall_enabled=False,stall_seconds=180,restart_player=True,player_console='',player_index=0)
 
 def validate_draft(config):
     if config.get('target','ranking') not in ('ranking','league'):raise ValueError('복귀 대상 모드를 확인하세요.')
+    if type(config.get('restart_player',True)) is not bool or not isinstance(config.get('player_console',''),str):raise ValueError('LDPlayer 재시작 설정을 확인하세요.')
+    if type(config.get('player_index',0)) is not int or not 0<=config.get('player_index',0)<=999:raise ValueError('LDPlayer 번호는 0~999입니다.')
     if type(config.get('stall_enabled',False)) is not bool:raise ValueError('화면 멈춤 감시 설정을 확인하세요.')
     if type(config.get('stall_seconds',180)) is not int or not 60<=config.get('stall_seconds',180)<=1800:raise ValueError('멈춤 감지 시간은 60~1800초입니다.')
     if type(config.get('enabled')) is not bool:raise ValueError('재접속 사용 설정이 올바르지 않습니다.')
