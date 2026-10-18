@@ -16,6 +16,7 @@ from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
 from league_count import LeagueCounter
+from stall import StallWatch
 from recovery import RecoveryStore,RecoveryMachine,default_recovery,validate_recovery,recovery_for_mode
 from ranking import RankingStore, RankingMachine, default_ranking, validate_ranking
 from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
@@ -353,6 +354,8 @@ class App:
             ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
             recovery_config=recovery_for_mode(cfg.get('recovery',default_recovery()),ranking_config['enabled'])
             recovery=RecoveryMachine(recovery_config,cfg['buttons'])
+            watchdog=StallWatch(recovery_config.get('stall_seconds',180))
+            watch_enabled=recovery_config['enabled'] and recovery_config.get('stall_enabled',False)
             last_process_poll=float('-inf')
             validate_rules(rules, cfg['buttons'])
             progress=ProgressClicker(progress_config,cfg['buttons'])
@@ -407,6 +410,26 @@ class App:
                     if not recovery.running:
                         self.stop.wait(.2);continue
                 png = adb.screenshot()
+                if watch_enabled:
+                    if recovery.active or not recovery.running:
+                        watchdog.reset()
+                    elif watchdog.observe(png,time.monotonic()):
+                        self.emit(f'화면 멈춤 의심 · {watchdog.seconds}초 이상 유의미한 화면 변화·진행 없음')
+                        diagnostic=ROOT/'logs'/'last_stall.png'
+                        diagnostic.parent.mkdir(exist_ok=True)
+                        diagnostic.write_bytes(png)
+                        self.emit(f'멈춤 감지 화면 저장 · {diagnostic}')
+                        if self.stop.is_set():break
+                        if cfg['dry']:
+                            self.emit('모의 멈춤 복구 · 게임 강제 종료/재실행 안 함')
+                        elif recovery.restart_stalled(time.monotonic()):
+                            if self.stop.is_set():break
+                            adb.stop_app(recovery_config['package'])
+                            if self.stop.is_set():break
+                            adb.launch_app(recovery_config['package'])
+                            self.emit('멈춤 복구 · 게임만 강제 종료 후 재실행 · 등록 경로로 복귀 대기')
+                        watchdog.reset()
+                        self.stop.wait(max(.1,interval));continue
                 if recovery_config['enabled'] and recovery.active:
                     import cv2,numpy as np
                     recovery_screen=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_GRAYSCALE)

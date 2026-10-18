@@ -7,10 +7,12 @@ from engine import SafetyStop
 PACKAGE='com.com2us.futurecpb.android.google.global.normal'
 
 def default_recovery():
-    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],max_launches=3)
+    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],max_launches=3,stall_enabled=False,stall_seconds=180)
 
 def validate_draft(config):
     if config.get('target','ranking') not in ('ranking','league'):raise ValueError('복귀 대상 모드를 확인하세요.')
+    if type(config.get('stall_enabled',False)) is not bool:raise ValueError('화면 멈춤 감시 설정을 확인하세요.')
+    if type(config.get('stall_seconds',180)) is not int or not 60<=config.get('stall_seconds',180)<=1800:raise ValueError('멈춤 감지 시간은 60~1800초입니다.')
     if type(config.get('enabled')) is not bool:raise ValueError('재접속 사용 설정이 올바르지 않습니다.')
     if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+',config.get('package','')):raise ValueError('게임 앱 패키지 이름이 올바르지 않습니다.')
     if type(config.get('max_launches')) is not int or not 1<=config['max_launches']<=10:raise ValueError('게임 재실행 한도는 1~10회입니다.')
@@ -68,6 +70,11 @@ class RecoveryMachine:
         self.launches+=1;self.last_launch=now;self.index=0;self.pending=None;self.suspended=None;self.counts={};self.since={};self.absent=0
         self.events.append(f'게임 재실행 요청 · {self.launches}/{self.config["max_launches"]}회')
         return True
+    def restart_stalled(self,now):
+        # Reuse the process-restart budget before issuing any force-stop command.
+        self.missing=1
+        return self.poll(False,now)
+
     def ready(self,key,now):
         return self.counts.get(key,0)>=3 and now-self.since.get(key,now)>=float(self.records[key].get('click_delay',0))
     def observe(self,found,now):
