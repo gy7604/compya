@@ -26,6 +26,18 @@ class PlayerTests(unittest.TestCase):
             p=self.build(Path(folder));p.command=Mock(return_value='1,other,1,2,1,99,88')
             with self.assertRaises(RuntimeError):p.restart()
             p.command.assert_called_once_with('list2')
+    def test_reconnect_uses_only_same_instance_loopback_not_device_list(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            p=self.build(Path(folder));p.adb.connect.side_effect=[RuntimeError('missing serial'),None]
+            p.connect_selected()
+            self.assertEqual(p.adb.serial,'127.0.0.1:5555')
+            self.assertEqual(p.adb.connect.call_count,2)
+            p.adb.run.assert_not_called()
+    def test_failed_fallback_restores_original_serial(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            p=self.build(Path(folder));p.adb.connect.side_effect=RuntimeError('offline')
+            with self.assertRaises(RuntimeError):p.connect_selected()
+            self.assertEqual(p.adb.serial,'emulator-5554')
     def test_closed_instance_is_launched_instead_of_rebooted(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
             p=self.build(Path(folder));p.command=Mock(side_effect=['0,game,0,0,0,0,0',''])

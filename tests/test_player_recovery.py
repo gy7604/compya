@@ -32,6 +32,7 @@ class PlayerRecoveryTests(unittest.TestCase):
         if fail_connect:adb.connect.side_effect=RuntimeError('offline')
         if fail_screenshot:adb.screenshot.side_effect=RuntimeError('capture timeout')
         player=Mock();player.index=0
+        player.connect_selected.side_effect=adb.connect
         player.restart.return_value=True
         adb.launch_app.side_effect=lambda package:app.stop.set()
         watchdog=Mock();watchdog.seconds=60

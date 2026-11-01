@@ -439,7 +439,9 @@ class App:
             while not self.stop.is_set():
                 try:
                     if need_connect:
-                        adb.connect();need_connect=False
+                        if player_restart:player_restart.connect_selected()
+                        else:adb.connect()
+                        need_connect=False
                     if recovery_config['enabled']:
                         poll_now=time.monotonic()
                         if poll_now-last_process_poll>=2:

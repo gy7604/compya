@@ -20,6 +20,20 @@ class PlayerRestart:
         if result.returncode:raise RuntimeError('LDPlayer 제어 명령 실패')
         return result.stdout.decode(errors='replace')
 
+    def connect_selected(self):
+        """Reconnect only the configured instance, never pick another device."""
+        try:
+            self.adb.connect()
+        except RuntimeError:
+            original=self.adb.serial
+            fallback=f'127.0.0.1:{5555+2*self.index}'
+            if original==fallback:raise
+            self.adb.serial=fallback
+            try:self.adb.connect()
+            except RuntimeError:
+                self.adb.serial=original
+                raise
+
     def restart(self):
         rows=self.command('list2').splitlines()
         row=next((row.split(',') for row in rows if row.split(',')[0].strip()==str(self.index)),None)
@@ -32,7 +46,7 @@ class PlayerRestart:
         deadline=time.monotonic()+120
         while not self.stop.is_set() and time.monotonic()<deadline:
             try:
-                self.adb.connect()
+                self.connect_selected()
                 if self.adb.run('shell','getprop','sys.boot_completed').strip()==b'1':return True
             except RuntimeError:pass
             if self.stop.wait(2):return False
