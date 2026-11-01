@@ -1,6 +1,24 @@
 """Bounded-size visual watchdog; taps alone never reset the timer."""
 import cv2
 import numpy as np
+from engine import SafetyStop
+
+
+class TransitionWatch:
+    """Bound an unverified transition even when background animation continues.
+
+    None means normal gameplay/waiting: it must not trigger a restart or stop.
+    Only confirmed state changes reset the deadline; repeated taps do not.
+    """
+    def __init__(self):
+        self.state=None
+        self.since=None
+
+    def observe(self, state, now, seconds=180):
+        if state != self.state:
+            self.state,self.since=state,now
+        if state is not None and now-self.since>=seconds:
+            raise SafetyStop(f'화면 전환 확인 시간 초과 · {state} · {seconds:g}초 · 추가 클릭 없이 중지')
 
 class StallWatch:
     def __init__(self, seconds=180):

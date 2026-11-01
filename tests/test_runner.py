@@ -6,6 +6,29 @@ from registry import new_button
 
 
 class RunnerTests(unittest.TestCase):
+    def test_animated_screen_with_stuck_button_stops_without_more_taps(self):
+        app=App.__new__(App)
+        app.stop=threading.Event()
+        app.stop.wait=Mock(return_value=False)
+        app.emit=Mock()
+        app.registry=Mock()
+        app.registry.resolve.side_effect=lambda x:x
+        button=new_button('PLAY BALL')
+        button.update(enabled=True,template='pb.png')
+        adb=Mock()
+        adb.screenshot.return_value=b'animated frame'
+        matcher=Mock()
+        matcher.find.return_value=(True,(100,200),.99,(720,1280))
+        cfg=dict(buttons=[button],adb='adb',serial='emulator-5554',dry=False)
+        with patch('app.ADB',return_value=adb),patch('vision.Matcher',return_value=matcher), \
+             patch('app.time.monotonic',side_effect=range(1000)), \
+             patch('diagnostics.write_stop_snapshot') as snapshot:
+            app.run(cfg)
+        self.assertEqual(adb.tap.call_count,1)
+        self.assertIn('화면 전환 확인 시간 초과',snapshot.call_args.kwargs['context']['error'])
+        adb.launch_app.assert_not_called()
+        adb.stop_app.assert_not_called()
+
     def run_sequence(self, dry, speed=None, fixed=False):
         app = App.__new__(App)
         app.stop = threading.Event()
@@ -32,8 +55,12 @@ class RunnerTests(unittest.TestCase):
         if speed is not None:
             cfg['speed'] = speed
         with patch('app.ADB', return_value=adb), patch('vision.Matcher', side_effect=factory), \
-             patch('app.time.monotonic', side_effect=range(100)):
+             patch('app.time.monotonic', side_effect=range(100)), \
+             patch('diagnostics.write_stop_snapshot') as snapshot:
             app.run(cfg)
+        snapshot.assert_called_once()
+        self.assertEqual(snapshot.call_args.kwargs['context']['error'],'offline')
+        self.assertIsNotNone(snapshot.call_args.kwargs['context']['last_click'])
         self.assertTrue(app.stop.is_set())
         if speed is not None:
             self.assertTrue(app.stop.wait.called)

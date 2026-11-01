@@ -59,14 +59,29 @@ class RecoveryMachine:
         self.active=False;self.running=True;self.hold=False;self.restored=False;self.launches=0
         self.last_launch=float('-inf');self.missing=0;self.index=0;self.pending=None;self.pending_type=None;self.suspended=None
         self.counts={};self.since={};self.absent=0;self.next_allowed=float('-inf');self.events=[]
+        self.route_since=None
+
+    def check_timeout(self,now):
+        if not self.active:
+            self.route_since=None
+            return
+        if self.route_since is None:self.route_since=now
+        # Include registered delays, but never extend this deadline for repeated
+        # launches, advertisements, animation, or a changing screen resolution.
+        delay=sum(float(self.records[key].get('click_delay',0))+float(self.records[key].get('cooldown',2))
+                  for key in self.config['steps']+self.config['popups'])
+        if now-self.route_since>=max(600,delay+180):
+            raise SafetyStop('자동 복귀 시간 초과 · 목표 화면 미확인 · 추가 재실행 없이 중지')
     def poll(self,running,now):
         if not self.config['enabled']:return False
+        self.check_timeout(now)
         self.running=running;self.missing=0 if running else self.missing+1
         if running:return False
         self.hold=True
         if self.missing<2:return False
         if not self.active:self.events.append('게임 종료 확인 · 자동 재접속 시작')
         self.active=True
+        self.check_timeout(now)
         if now-self.last_launch<30:return False
         if self.launches>=self.config['max_launches']:raise SafetyStop('게임 재실행 한도 도달 · 추가 실행 없이 중지')
         self.launches+=1;self.last_launch=now;self.index=0;self.pending=None;self.suspended=None;self.counts={};self.since={};self.absent=0
@@ -82,6 +97,7 @@ class RecoveryMachine:
     def observe(self,found,now):
         self.restored=False;self.hold=False
         if not self.config['enabled']:return None
+        self.check_timeout(now)
         if not self.running:self.hold=True;return None
         refs=[self.config['goal']]+self.config['steps']+self.config['popups']
         for key in refs:
@@ -93,6 +109,7 @@ class RecoveryMachine:
         if popups or (found.get(self.config['steps'][0],False) and not found.get(self.config['goal'],False)):
             if not self.active:self.index=0;self.events.append('접속 화면 또는 광고 감지 · 모드 복귀 시작')
             self.active=True
+            self.check_timeout(now)
         if not self.active:return None
         self.hold=True
         if self.pending and self.pending_type=='popup':

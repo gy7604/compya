@@ -16,7 +16,7 @@ from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
 from league_count import LeagueCounter
-from stall import StallWatch
+from stall import StallWatch,TransitionWatch
 from recovery import RecoveryStore,RecoveryMachine,default_recovery,validate_recovery,recovery_for_mode
 from ranking import RankingStore, RankingMachine, default_ranking, validate_ranking
 from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
@@ -342,6 +342,9 @@ class App:
 
     def run(self, cfg):
         png, results, records, machine = None, {}, {}, None
+        previous_png=None
+        last_click=None
+        recovery=ranking=None
         try:
             from vision import Matcher
             from registry import validate
@@ -355,6 +358,7 @@ class App:
             recovery_config=recovery_for_mode(cfg.get('recovery',default_recovery()),ranking_config['enabled'])
             recovery=RecoveryMachine(recovery_config,cfg['buttons'])
             watchdog=StallWatch(recovery_config.get('stall_seconds',180))
+            transition_watch=TransitionWatch()
             watch_enabled=recovery_config['enabled'] and recovery_config.get('stall_enabled',False)
             last_process_poll=float('-inf')
             validate_rules(rules, cfg['buttons'])
@@ -391,7 +395,7 @@ class App:
             frames, interval = speed_settings(cfg.get('speed', DEFAULT_MODE))
             machine = WorkflowMachine(records, rules, time.monotonic(), detection_frames=frames)
             self.emit('시작 · ' + ('모의 실행' if cfg['dry'] else '실제 탭 전송'))
-            self.emit('일반 버튼과 조건 규칙의 나타남 / 사라짐 / 최종 이미지 대기는 시간 제한 없이 계속합니다.')
+            self.emit('일반 경기 버튼 대기는 유지 · 클릭 후 전환/규칙 진행은 최소 180초, 자동 복귀는 최소 600초 안에 확인되지 않으면 동작을 중단합니다.')
             self.emit(f'반응속도 · 인식 {frames}회 / 추가 화면 대기 {interval:g}초 / 규칙 전환 확인 3회 / 일반 버튼 사라짐 확인은 버튼별 설정')
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             if progress_config['enabled']:
@@ -413,7 +417,8 @@ class App:
                             self.emit('모의 게임 재실행 · 실제 실행 안 함' if cfg['dry'] else '게임 실행 요청 전송 · 접속 화면 대기')
                     if not recovery.running:
                         self.stop.wait(.2);continue
-                png = adb.screenshot()
+                next_png = adb.screenshot()
+                previous_png,png=png,next_png
                 if watch_enabled:
                     if recovery.active or not recovery.running:
                         watchdog.reset()
@@ -464,6 +469,7 @@ class App:
                 recovery_action=recovery.observe({key:result[0] for key,result in results.items()},now)
                 while recovery.events:self.emit(recovery.events.pop(0))
                 if recovery.restored:
+                    transition_watch=TransitionWatch()
                     completed=ranking.completed;target_reached=ranking.target_reached
                     ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
                     ranking.completed=completed;ranking.target_reached=target_reached
@@ -479,6 +485,7 @@ class App:
                         _,matched_point,score,_=results[recovery_action]
                         point=click_point(records[recovery_action],matched_point,size)
                         if not cfg['dry']:adb.tap(point)
+                        last_click=dict(button=recovery_action,point=point,time=now,dry=cfg['dry'])
                         self.emit(f'{"모의 복구 탭" if cfg["dry"] else "복구 탭"} {records[recovery_action]["name"]} 좌표={point} 점수={score:.3f}')
                     if now-heartbeat>=5:
                         recovery_keys=[recovery_config['goal']]+recovery_config['steps']+recovery_config['popups']
@@ -507,11 +514,13 @@ class App:
                 if ranking.finished:
                     self.emit('랭킹 목표 횟수 완료 · 다음 연속 경기 시작 전에 중지');break
                 if ranking.hold:
+                    transition_watch.observe(None,now)
                     if ranking_action:
                         if self.stop.is_set():break
                         _,matched_point,score,_=results[ranking_action]
                         point=click_point(records[ranking_action],matched_point,size)
                         if not cfg['dry']:adb.tap(point)
+                        last_click=dict(button=ranking_action,point=point,time=now,dry=cfg['dry'])
                         self.emit(f'{"모의 랭킹 탭" if cfg["dry"] else "랭킹 탭"} {records[ranking_action]["name"]} 좌표={point} 점수={score:.3f}')
                         if ranking_action==ranking_config['proceed']:
                             machine=WorkflowMachine(records,rules,now,detection_frames=frames)
@@ -522,6 +531,18 @@ class App:
                         heartbeat=now
                     self.stop.wait(interval);continue
                 action = machine.observe({n: r[0] for n, r in results.items()}, now)
+                transition_state=None
+                transition_limit=180
+                if machine.active:
+                    transition_state=('규칙',machine.active['id'],machine.index,machine.phase)
+                    record=records[machine.active['steps'][machine.index]['button']]
+                    transition_limit=max(180,float(record.get('click_delay',0))+float(record.get('cooldown',2))+180)
+                elif machine.normal.pending:
+                    key=machine.normal.pending
+                    transition_state=('클릭 확인',key)
+                    record=records[key]
+                    transition_limit=max(180,float(record.get('retry_limit',0))*max(float(record.get('retry_interval',8)),float(record.get('click_delay',0)),float(record.get('cooldown',2)))+180)
+                transition_watch.observe(transition_state,now,transition_limit)
                 while machine.events:
                     self.emit(machine.events.pop(0))
                 if machine.finished:
@@ -534,6 +555,7 @@ class App:
                     point = click_point(records[action],matched_point,size)
                     if not cfg['dry']:
                         adb.tap(point)
+                    last_click=dict(button=action,point=point,time=now,dry=cfg['dry'])
                     taps += 1
                     label = records[action]['name']
                     mode='지정 좌표' if records[action].get('click_mode')=='fixed' else '이미지 중앙'
@@ -566,16 +588,23 @@ class App:
                     self.emit('모의 실행은 클릭하지 않습니다. 모의 탭 후 게임 버튼을 직접 눌러 전환을 확인하세요.')
                 else:
                     self.emit('게임에서 버튼이 실제로 눌렸는지 확인하세요. 누르지 않았다면 등록 이미지·검색 영역을 다시 확인하세요.')
-                if png is not None and results:
-                    try:
-                        from diagnostics import write_stop_snapshot
-                        path = write_stop_snapshot(ROOT, png, records, results,
-                                                   machine.pending if machine else None, cfg['dry'])
-                        self.emit(f'중지 직전 화면 저장 · {path}')
-                        scores = ' / '.join(f'{records[n]["name"]}={r[2]:.3f} (기준 {records[n]["threshold"]:.3f})' for n, r in results.items())
-                        self.emit('마지막 인식 · ' + scores)
-                    except Exception as diagnostic_error:
-                        self.emit(f'중지 화면 저장 실패 · {diagnostic_error}')
+            if png is not None:
+                try:
+                    from diagnostics import write_stop_snapshot
+                    context=dict(error=str(e),error_type=type(e).__name__,last_click=last_click,
+                                 workflow=machine.status if machine else None,
+                                 recovery_active=recovery.active if recovery else False,
+                                 recovery_step=recovery.index if recovery else None,
+                                 recovery_launches=recovery.launches if recovery else 0,
+                                 ranking_phase=ranking.phase if ranking else None)
+                    path = write_stop_snapshot(ROOT, png, records, results,
+                                               machine.pending if machine else None, cfg['dry'],
+                                               context=context,previous_png=previous_png)
+                    self.emit(f'중지 직전 화면 저장 · {path}')
+                    scores = ' / '.join(f'{records[n]["name"]}={r[2]:.3f} (기준 {records[n]["threshold"]:.3f})' for n, r in results.items())
+                    self.emit('마지막 인식 · ' + scores)
+                except Exception as diagnostic_error:
+                    self.emit(f'중지 화면 저장 실패 · {diagnostic_error}')
         finally:
             self.stop.set()
             self.emit('실행 종료')

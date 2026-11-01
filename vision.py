@@ -27,7 +27,11 @@ class Matcher:
         if th > rh or tw > rw:
             raise ValueError('템플릿이 검색 영역보다 큽니다.')
         result = cv2.matchTemplate(region, self.template, cv2.TM_CCOEFF_NORMED)
+        # Non-finite correlations must never become a clickable candidate.
+        result = np.where(np.isfinite(result), result, -1).astype(np.float32)
         _, score, _, loc = cv2.minMaxLoc(result)
+        patch_gray=region[loc[1]:loc[1]+th,loc[0]:loc[0]+tw]
+        contrast_ok=patch_gray.std()>=2
         color_ok=True
         if self.color_tolerance is not None:
             color_screen=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_COLOR)
@@ -35,4 +39,4 @@ class Matcher:
             error=float(np.abs(patch.astype(np.float32)-self.color_template.astype(np.float32)).mean())
             color_ok=error<=self.color_tolerance
             score=min(score,1-error/255)
-        return color_ok and score >= self.threshold, (x+loc[0]+tw//2, y+loc[1]+th//2), score, (w, h)
+        return bool(contrast_ok and color_ok and score >= self.threshold), (x+loc[0]+tw//2, y+loc[1]+th//2), float(score), (w, h)
