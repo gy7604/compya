@@ -34,7 +34,9 @@ class ADB:
     def app_running(self,package):
         from recovery import validate_draft,default_recovery
         validate_draft(dict(default_recovery(),package=package))
-        return bool(self.run('shell','sh','-c','pidof '+package+' || true').strip())
+        # adb shell already invokes a shell. A nested sh -c loses the command
+        # grouping on LDPlayer's ADB and runs pidof without its package argument.
+        return bool(self.run('shell','pidof '+package+' || true').strip())
 
     def launch_app(self,package):
         from recovery import validate_draft,default_recovery

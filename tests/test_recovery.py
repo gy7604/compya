@@ -102,7 +102,10 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaises(ValueError):validate_draft(dict(default_recovery(),package=value))
     def test_adb_queries_and_launch_target_only_configured_package(self):
         adb=ADB('adb','emulator-5554');adb.run=Mock(return_value=b'1234\n')
-        self.assertTrue(adb.app_running(PACKAGE));self.assertIn(PACKAGE,adb.run.call_args.args[-1])
+        self.assertTrue(adb.app_running(PACKAGE))
+        self.assertEqual(adb.run.call_args.args,('shell','pidof '+PACKAGE+' || true'))
+        adb.run.return_value=b''
+        self.assertFalse(adb.app_running(PACKAGE))
         adb.run=Mock(side_effect=[(PACKAGE+'/com.hive.HiveUnityPlayerActivity\n').encode(),b'Status: ok'])
         adb.launch_app(PACKAGE)
         self.assertEqual(adb.run.call_args.args,('shell','am','start','-n',PACKAGE+'/com.hive.HiveUnityPlayerActivity'))
