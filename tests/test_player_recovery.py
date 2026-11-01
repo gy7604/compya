@@ -23,26 +23,30 @@ class PlayerRecoveryTests(unittest.TestCase):
         with self.assertRaises(SafetyStop):m.reserve_player_restart(800)
         self.assertEqual(m.launches,2)
 
-    def run_case(self,fail_connect=False,dry=False,fail_screenshot=False):
+    def run_case(self,fail_connect=False,dry=False,fail_screenshot=False,boot_failure=False,notify=True):
         records,cfg=fixture()
         cfg.update(target='league',stall_enabled=True,restart_player=True)
         app=App.__new__(App);app.stop=threading.Event();app.stop.wait=Mock(return_value=False)
-        app.emit=Mock();app.registry=Mock();app.registry.resolve.side_effect=lambda x:x
+        app.emit=Mock();app.dispatch_notification=Mock();app.registry=Mock();app.registry.resolve.side_effect=lambda x:x
         adb=Mock();adb.app_running.return_value=True;adb.screenshot.return_value=b'frame'
         if fail_connect:adb.connect.side_effect=RuntimeError('offline')
         if fail_screenshot:adb.screenshot.side_effect=RuntimeError('capture timeout')
         player=Mock();player.index=0
         player.connect_selected.side_effect=adb.connect
         player.restart.return_value=True
+        if boot_failure:
+            player.restart.side_effect=RuntimeError('boot timeout')
+            cfg['max_launches']=10
         adb.launch_app.side_effect=lambda package:app.stop.set()
         watchdog=Mock();watchdog.seconds=60
         watchdog.observe.side_effect=[False,True]
         def matcher(path,*args,**kwargs):
             value=Mock();value.find.return_value=(path=='title.png',(100,200),.99,(720,1280));return value
-        config=dict(buttons=records,recovery=cfg,adb='adb',serial='emulator-5554',dry=dry)
+        notifications=dict(enabled=notify,watch=['title'],topic='test_'+('a'*32),message='test',stop=False)
+        config=dict(buttons=records,recovery=cfg,notifications=notifications,adb='adb',serial='emulator-5554',dry=dry)
         with patch('app.ADB',return_value=adb),patch('player_restart.PlayerRestart',return_value=player), \
              patch('app.StallWatch',return_value=watchdog),patch('vision.Matcher',side_effect=matcher), \
-             patch('app.time.monotonic',side_effect=range(1000)),patch('diagnostics.write_stop_snapshot'):
+             patch('app.time.monotonic',side_effect=range(0,40000,40)),patch('diagnostics.write_stop_snapshot'):
             app.run(config)
         return app,adb,player
 
@@ -66,3 +70,16 @@ class PlayerRecoveryTests(unittest.TestCase):
         _,adb,player=self.run_case(fail_screenshot=True)
         self.assertEqual(adb.screenshot.call_count,3)
         player.restart.assert_called_once();adb.tap.assert_not_called()
+
+    def test_ten_failed_restarts_send_one_failure_alert_and_stop(self):
+        app,adb,player=self.run_case(fail_connect=True,boot_failure=True)
+        self.assertEqual(player.restart.call_count,10)
+        app.dispatch_notification.assert_called_once()
+        self.assertIn('10회',app.dispatch_notification.call_args.args[1])
+        self.assertNotIn('boot timeout',app.dispatch_notification.call_args.args[1])
+        adb.tap.assert_not_called();self.assertTrue(app.stop.is_set())
+
+    def test_disabled_phone_notifications_do_not_send_on_exhaustion(self):
+        app,_,player=self.run_case(fail_connect=True,boot_failure=True,notify=False)
+        self.assertEqual(player.restart.call_count,10)
+        app.dispatch_notification.assert_not_called()

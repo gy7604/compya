@@ -425,16 +425,25 @@ class App:
                 if self.stop.is_set():return False
                 if cfg['dry']:
                     raise SafetyStop('모의 복구 감지 · '+reason+' · LDPlayer 재시작/게임 실행 안 함')
-                if not recovery.reserve_player_restart(time.monotonic()):return False
-                while recovery.events:self.emit(recovery.events.pop(0))
-                self.emit(f'자동 복구 · {reason} · LDPlayer {player_restart.index}번 재시작 · 부팅/ADB 연결 대기')
-                if not player_restart.restart():
-                    self.stop.set();return False
-                if self.stop.is_set():return False
-                adb.launch_app(recovery_config['package'])
-                watchdog.reset()
-                self.emit('자동 복구 · LDPlayer 부팅 완료 · 게임 실행 · 목표 모드 복귀 대기')
-                return True
+                while not self.stop.is_set():
+                    if not recovery.reserve_player_restart(time.monotonic()):return False
+                    while recovery.events:self.emit(recovery.events.pop(0))
+                    self.emit(f'자동 복구 · {reason} · LDPlayer {player_restart.index}번 재시작 · 부팅/ADB 연결 대기')
+                    try:
+                        if not player_restart.restart():
+                            self.stop.set();return False
+                        if self.stop.is_set():return False
+                        adb.launch_app(recovery_config['package'])
+                    except RuntimeError as restart_error:
+                        self.emit(f'플레이어 복구 실패 · {recovery.launches}/{recovery_config["max_launches"]}회 · {restart_error}')
+                        if recovery.launches>=recovery_config['max_launches']:
+                            raise SafetyStop('자동 복구 한도 도달 · 플레이어 재시작/게임 실행 실패') from restart_error
+                        if self.stop.wait(30):return False
+                        continue
+                    watchdog.reset()
+                    self.emit('자동 복구 · LDPlayer 부팅 완료 · 게임 실행 · 목표 모드 복귀 대기')
+                    return True
+                return False
 
             while not self.stop.is_set():
                 try:
@@ -634,6 +643,19 @@ class App:
                 self.stop.wait(interval)
         except Exception as e:
             self.emit(f'안전 중지 · {e}')
+            if (recovery is not None and recovery.active and recovery.config['enabled']
+                    and recovery.launches>=recovery.config['max_launches']
+                    and not self.stop.is_set()):
+                if cfg['dry']:
+                    self.emit('모의 복구 실패 알림 · 실제 휴대폰 전송 안 함')
+                elif notification_config.get('enabled'):
+                    # One terminal exception per run, hence one alert. Do not
+                    # send screenshots, device details, or raw exception text.
+                    text=f'컴프야 자동 복구를 {recovery.launches}회 시도했지만 경기 화면으로 복귀하지 못해 매크로를 중지했습니다. PC에서 플레이어와 게임 상태를 확인해주세요.'
+                    self.dispatch_notification(notification_config,text)
+                    self.emit('자동 복구 한도 도달 · 휴대폰 알림 전송 요청')
+                else:
+                    self.emit('복구 실패 알림 미전송 · 휴대폰 알림 설정이 꺼져 있습니다.')
             if isinstance(e, SafetyStop):
                 if cfg['dry']:
                     self.emit('모의 실행은 클릭하지 않습니다. 모의 탭 후 게임 버튼을 직접 눌러 전환을 확인하세요.')
