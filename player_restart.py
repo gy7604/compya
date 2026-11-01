@@ -22,10 +22,12 @@ class PlayerRestart:
 
     def restart(self):
         rows=self.command('list2').splitlines()
-        if not any(row.split(',')[0].strip()==str(self.index) for row in rows):
+        row=next((row.split(',') for row in rows if row.split(',')[0].strip()==str(self.index)),None)
+        if row is None:
             raise RuntimeError('지정한 LDPlayer 인스턴스를 찾지 못했습니다.')
         if self.stop.is_set():return False
-        self.command('reboot','--index',str(self.index))
+        action='launch' if len(row)>4 and row[4].strip()=='0' else 'reboot'
+        self.command(action,'--index',str(self.index))
         if self.stop.wait(10):return False
         deadline=time.monotonic()+120
         while not self.stop.is_set() and time.monotonic()<deadline:

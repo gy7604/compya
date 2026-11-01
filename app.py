@@ -402,7 +402,6 @@ class App:
                         for key, r in records.items()}
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
             adb = ADB(cfg['adb'], cfg['serial'])
-            adb.connect()
             player_restart=None
             if watch_enabled and recovery_config.get('restart_player',True):
                 from player_restart import PlayerRestart
@@ -419,23 +418,56 @@ class App:
             dimensions = None
             previous_state = None
             heartbeat = taps = 0
+            need_connect=True
+            adb_failures=0
+
+            def reboot_player(reason):
+                if self.stop.is_set():return False
+                if cfg['dry']:
+                    raise SafetyStop('모의 복구 감지 · '+reason+' · LDPlayer 재시작/게임 실행 안 함')
+                if not recovery.reserve_player_restart(time.monotonic()):return False
+                while recovery.events:self.emit(recovery.events.pop(0))
+                self.emit(f'자동 복구 · {reason} · LDPlayer {player_restart.index}번 재시작 · 부팅/ADB 연결 대기')
+                if not player_restart.restart():
+                    self.stop.set();return False
+                if self.stop.is_set():return False
+                adb.launch_app(recovery_config['package'])
+                watchdog.reset()
+                self.emit('자동 복구 · LDPlayer 부팅 완료 · 게임 실행 · 목표 모드 복귀 대기')
+                return True
+
             while not self.stop.is_set():
-                if recovery_config['enabled']:
-                    poll_now=time.monotonic()
-                    if poll_now-last_process_poll>=2:
-                        last_process_poll=poll_now
-                        launch=recovery.poll(adb.app_running(recovery_config['package']),poll_now)
-                        while recovery.events:self.emit(recovery.events.pop(0))
-                        if launch:
-                            if self.stop.is_set():break
-                            if not cfg['dry']:adb.launch_app(recovery_config['package'])
-                            self.emit('모의 게임 재실행 · 실제 실행 안 함' if cfg['dry'] else '게임 실행 요청 전송 · 접속 화면 대기')
-                    if not recovery.running:
-                        self.stop.wait(.2);continue
-                next_png = adb.screenshot()
+                try:
+                    if need_connect:
+                        adb.connect();need_connect=False
+                    if recovery_config['enabled']:
+                        poll_now=time.monotonic()
+                        if poll_now-last_process_poll>=2:
+                            last_process_poll=poll_now
+                            launch=recovery.poll(adb.app_running(recovery_config['package']),poll_now)
+                            while recovery.events:self.emit(recovery.events.pop(0))
+                            if launch:
+                                if self.stop.is_set():break
+                                if not cfg['dry']:adb.launch_app(recovery_config['package'])
+                                self.emit('모의 게임 재실행 · 실제 실행 안 함' if cfg['dry'] else '게임 실행 요청 전송 · 접속 화면 대기')
+                        if not recovery.running:
+                            self.stop.wait(.2);continue
+                    next_png = adb.screenshot()
+                    adb_failures=0
+                except SafetyStop:
+                    raise
+                except RuntimeError as connection_error:
+                    if not player_restart:raise
+                    adb_failures+=1;need_connect=True
+                    self.emit(f'ADB 연결/화면 수신 실패 · {adb_failures}/3회 · {connection_error}')
+                    if self.stop.is_set():break
+                    if adb_failures>=3:
+                        if reboot_player('ADB 연속 실패'):
+                            adb_failures=0;need_connect=False;last_process_poll=float('-inf')
+                    self.stop.wait(2);continue
                 previous_png,png=png,next_png
                 if watch_enabled:
-                    if recovery.active or not recovery.running:
+                    if not recovery.running:
                         watchdog.reset()
                     elif watchdog.observe(png,time.monotonic()):
                         self.emit(f'화면 멈춤 의심 · {watchdog.seconds}초 이상 유의미한 화면 변화·진행 없음')
@@ -446,13 +478,12 @@ class App:
                         if self.stop.is_set():break
                         if cfg['dry']:
                             self.emit('모의 멈춤 복구 · LDPlayer/게임 종료 및 재실행 안 함')
+                        elif player_restart:
+                            reboot_player('복귀 중 화면 정지' if recovery.active else '경기 화면 정지')
+                            last_process_poll=float('-inf')
                         elif recovery.restart_stalled(time.monotonic()):
                             if self.stop.is_set():break
-                            if player_restart:
-                                self.emit(f'멈춤 복구 · LDPlayer {player_restart.index}번 재시작 · 부팅/ADB 연결 대기')
-                                if not player_restart.restart():break
-                            else:
-                                adb.stop_app(recovery_config['package'])
+                            adb.stop_app(recovery_config['package'])
                             if self.stop.is_set():break
                             adb.launch_app(recovery_config['package'])
                             self.emit('멈춤 복구 · 게임 실행 · 등록 경로로 복귀 대기')

@@ -26,6 +26,12 @@ class PlayerTests(unittest.TestCase):
             p=self.build(Path(folder));p.command=Mock(return_value='1,other,1,2,1,99,88')
             with self.assertRaises(RuntimeError):p.restart()
             p.command.assert_called_once_with('list2')
+    def test_closed_instance_is_launched_instead_of_rebooted(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            p=self.build(Path(folder));p.command=Mock(side_effect=['0,game,0,0,0,0,0',''])
+            p.adb.run.return_value=b'1'
+            self.assertTrue(p.restart())
+            self.assertEqual(p.command.call_args_list[1].args,('launch','--index','0'))
     def test_cancel_during_boot_wait(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
             p=self.build(Path(folder));p.command=Mock(side_effect=['0,game',''])

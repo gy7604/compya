@@ -92,6 +92,24 @@ class RecoveryMachine:
         self.missing=1
         return self.poll(False,now)
 
+    def reserve_player_restart(self,now):
+        """Reserve the shared retry budget before any emulator command.
+
+        A new bounded boot/return attempt can recover an already timed-out
+        route; it must never erase the session's total launch count.
+        """
+        if not self.config['enabled']:return False
+        if self.launches>=self.config['max_launches']:
+            raise SafetyStop('자동 복구 한도 도달 · 추가 LDPlayer 재시작 없이 중지')
+        if now-self.last_launch<30:return False
+        self.launches+=1;self.last_launch=now
+        self.active=self.running=self.hold=True
+        self.restored=False;self.route_since=now;self.missing=0;self.index=0
+        self.pending=self.pending_type=self.suspended=None
+        self.counts={};self.since={};self.absent=0;self.next_allowed=float('-inf')
+        self.events.append(f'LDPlayer 복구 시도 · {self.launches}/{self.config["max_launches"]}회')
+        return True
+
     def ready(self,key,now):
         return self.counts.get(key,0)>=3 and now-self.since.get(key,now)>=float(self.records[key].get('click_delay',0))
     def observe(self,found,now):
