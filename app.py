@@ -467,6 +467,9 @@ class App:
                     self.stop.wait(2);continue
                 previous_png,png=png,next_png
                 if watch_enabled:
+                    # A cold emulator/game launch can legitimately stay black
+                    # longer than the user's in-game freeze threshold.
+                    watchdog.seconds=max(180,recovery_config.get('stall_seconds',180)) if recovery.active else recovery_config.get('stall_seconds',180)
                     if not recovery.running:
                         watchdog.reset()
                     elif watchdog.observe(png,time.monotonic()):
