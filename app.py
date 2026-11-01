@@ -16,6 +16,8 @@ from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
 from league_count import LeagueCounter
+from collections import deque
+from log_view import concise_status,important_message
 from stall import StallWatch,TransitionWatch
 from recovery import RecoveryStore,RecoveryMachine,default_recovery,validate_recovery,recovery_for_mode
 from ranking import RankingStore, RankingMachine, default_ranking, validate_ranking
@@ -116,9 +118,22 @@ class App:
         self.start_button.pack(side='left')
         ttk.Button(buttons, text='중지 (Esc)', command=self.stop.set).pack(side='left', padx=8)
         self.status = tk.StringVar(value='대기 중 · 기본 모의 실행')
-        ttk.Label(buttons, textvariable=self.status).pack(side='left')
-        self.log = tk.Text(root, height=18, state='disabled')
-        self.log.pack(fill='both', expand=True, padx=12, pady=12)
+        ttk.Label(buttons, textvariable=self.status,wraplength=650).pack(side='left')
+        log_bar=ttk.Frame(root)
+        log_bar.pack(fill='x',padx=12,pady=(8,0))
+        ttk.Label(log_bar,text='주요 기록 · 상세 내용은 logs/macro.log에 자동 저장').pack(side='left')
+        self.detailed_log=tk.BooleanVar(value=False)
+        ttk.Checkbutton(log_bar,text='상세 로그 보기',variable=self.detailed_log,command=self.render_log).pack(side='right')
+        self.log_history=deque(maxlen=300)
+        self.important_history=deque(maxlen=300)
+        log_frame=ttk.Frame(root)
+        log_frame.pack(fill='both',expand=True,padx=12,pady=(4,12))
+        self.log = tk.Text(log_frame, height=12, state='disabled',wrap='word')
+        scrollbar=ttk.Scrollbar(log_frame,orient='vertical',command=self.log.yview)
+        self.log.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side='right',fill='y')
+        self.log.pack(side='left',fill='both',expand=True)
+        self.log.tag_configure('error',foreground='#b42318')
         (ROOT/'logs').mkdir(exist_ok=True)
         self.logger = logging.getLogger('macro')
         self.logger.setLevel(logging.INFO)
@@ -609,7 +624,20 @@ class App:
             self.stop.set()
             self.emit('실행 종료')
 
+    def render_log(self):
+        self.log.configure(state='normal')
+        self.log.delete('1.0','end')
+        history=self.log_history if self.detailed_log.get() else self.important_history
+        for stamp,message in history:
+            shown=message if self.detailed_log.get() else important_message(message)
+            if shown is not None:
+                tag='error' if any(word in message for word in ('안전 중지','실패','시간 초과')) else 'normal'
+                self.log.insert('end',stamp+' '+shown+'\n',tag)
+        self.log.see('end')
+        self.log.configure(state='disabled')
+
     def poll(self):
+        log_changed=False
         for _ in range(100):
             try:
                 msg = self.events.get_nowait()
@@ -638,13 +666,12 @@ class App:
                     except Exception as e:
                         messagebox.showerror('캡처 실패', str(e))
                 continue
-            self.status.set(msg)
-            self.log.configure(state='normal')
-            self.log.insert('end', time.strftime('%H:%M:%S') + ' ' + msg + '\n')
-            if int(self.log.index('end-1c').split('.')[0]) > 1200:
-                self.log.delete('1.0', '201.0')
-            self.log.see('end')
-            self.log.configure(state='disabled')
+            self.status.set(concise_status(msg))
+            entry=(time.strftime('%H:%M:%S'),msg)
+            self.log_history.append(entry)
+            if important_message(msg) is not None:self.important_history.append(entry)
+            log_changed=True
+        if log_changed:self.render_log()
         running = self.worker and self.worker.is_alive()
         if not running and not self.updating:
             self.start_button.configure(state='normal')
