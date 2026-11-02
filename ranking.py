@@ -1,10 +1,11 @@
 """Ranking lobby sequence; counts completed consecutive-match batches, never individual games."""
 import json
 from pathlib import Path
+from engine import SafetyStop
 
 
 def default_ranking():
-    return dict(enabled=False,lobby='',refresh='',points='',paid='',series='',disabled='',proceed='',result='',confirm='',reward='',reward_confirm='',refresh_dialog='',points_confirm='',star_confirm='',allow_star=False)
+    return dict(enabled=False,lobby='',refresh='',points='',paid='',series='',disabled='',proceed='',result='',confirm='',reward='',reward_confirm='',refresh_dialog='',points_confirm='',star_confirm='',promotion='',allow_star=False)
 
 
 def validate_ranking_draft(config):
@@ -27,7 +28,7 @@ def validate_ranking(config,records):
     if type(config.get('allow_star',False)) is not bool:raise ValueError('별 갱신 사용 여부가 올바르지 않습니다.')
     if config.get('allow_star') and (not config.get('paid') or not config.get('star_confirm')):
         raise ValueError('별 갱신을 켜려면 로비 별 아이콘과 팝업 별 확인 이미지를 등록하세요.')
-    keys=[config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm','refresh_dialog','points_confirm','star_confirm') if config.get(key)]
+    keys=[config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm','refresh_dialog','points_confirm','star_confirm','promotion') if config.get(key)]
     if len(keys)!=len(set(keys)) or any(key not in available for key in keys):
         raise ValueError('랭킹 이미지는 서로 다르게 선택하고 버튼 관리에서 사용을 켜세요.')
     if bool(config.get('reward')) != bool(config.get('reward_confirm')):
@@ -64,12 +65,28 @@ class RankingMachine:
         self.next_allowed=float('-inf');self.finished=False;self.events=[];self.hold=False
         self.reward=config.get('reward','');self.reward_confirm=config.get('reward_confirm','');self.reward_absent=0;self.target_reached=False;self.initial_sync=True
         self.refresh_verified=False
+        self.promotion_attempts=0
+        self.promotion_absent=0
     def stable(self,key,found):
         return bool(key) and self.counts.get(key,0)>=3
     def observe(self,found,now):
         self.hold=False
         if not self.config['enabled']:return None
         if self.finished:self.hold=True;return None
+        promotion=self.config.get('promotion','')
+        if promotion:
+            present=found.get(promotion,False)
+            self.promotion_absent=0 if present else self.promotion_absent+1
+            self.counts[promotion]=self.counts.get(promotion,0)+1 if present else 0
+            if present:
+                self.hold=True
+                if self.counts[promotion]>=3 and now>=self.next_allowed:
+                    if self.promotion_attempts>=3:raise SafetyStop('랭킹 승격 안내 닫기 3회 실패')
+                    self.promotion_attempts+=1;self.next_allowed=now+8
+                    self.events.append('랭킹 승격 안내 확인 · 경기/구매 횟수 보존')
+                    return promotion
+                return None
+            if self.promotion_absent>=3:self.promotion_attempts=0
         lobby_key,refresh,points,paid,series,disabled,proceed,result,confirm=(self.config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm'))
         for key in (lobby_key,refresh,points,paid,series,disabled,proceed,result,confirm):
             if key:self.counts[key]=self.counts.get(key,0)+1 if found.get(key,False) else 0

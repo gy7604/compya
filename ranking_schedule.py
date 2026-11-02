@@ -24,7 +24,8 @@ def policy(now):
 
 def defaults():
     return dict(enabled=False, ranking_steps=[], points_limit=100, star_limit=100,
-                free_limit=100, exhausted='', points_price='', star_price='',ocr_prices=False)
+                free_limit=100, exhausted='', points_price='', star_price='',ocr_prices=False,
+                one_off_star_date='')
 
 
 def validate(config, records, ranking, recovery):
@@ -32,6 +33,11 @@ def validate(config, records, ranking, recovery):
         raise ValueError('랭킹 일정 사용 설정을 확인하세요.')
     if not config.get('enabled'):return
     if type(config.get('ocr_prices',False)) is not bool:raise ValueError('변경 금액 인식 설정을 확인하세요.')
+    override=config.get('one_off_star_date','')
+    if override:
+        try:
+            if datetime.strptime(override,'%Y-%m-%d').date().isoformat()!=override:raise ValueError()
+        except (TypeError,ValueError):raise ValueError('1회 별 사용 승인 날짜를 확인하세요.')
     from ranking import validate_ranking
     from recovery import validate_recovery
     validate_ranking(dict(ranking, enabled=True, allow_star=False), records)
@@ -110,7 +116,9 @@ class DailyRun:
 
     def due(self):
         day, due, _ = policy(self.clock())
-        return due and self.data['days'].get(day, {}).get('status') not in ('done', 'blocked')
+        entry=self.data['days'].get(day,{})
+        extra=self.config.get('one_off_star_date')==day and not entry.get('one_off_star_started')
+        return due and (entry.get('status') not in ('done', 'blocked') or (entry.get('status')=='done' and extra))
 
     def begin(self):
         day, due, _ = policy(self.clock())
@@ -118,6 +126,11 @@ class DailyRun:
         self.day = day
         entry = self.data['days'].setdefault(day, dict(status='active', completed=0,
                            purchases={'free': 0, 'points': 0, 'star': 0}, pending=None))
+        if self.config.get('one_off_star_date')==day and not entry.get('one_off_star_started'):
+            if entry['status']=='blocked' or entry.get('pending'):
+                raise SafetyStop('확인 대기 중인 구매를 먼저 확인하세요.')
+            entry['status']='active'
+            entry['one_off_star_started']=True
         if entry['status'] != 'active':raise SafetyStop('오늘 랭킹은 이미 완료/확인 대기 상태입니다.')
         self.save()
         return entry
@@ -127,7 +140,9 @@ class DailyRun:
 
     def allowed(self, currency):
         day, due, weekend = policy(self.clock())
-        return day == self.day and due and (currency != 'star' or weekend)
+        extra=(self.config.get('one_off_star_date')==day and self.day==day
+               and self.entry.get('one_off_star_started') and self.entry['status']=='active')
+        return day == self.day and due and (currency != 'star' or weekend or extra)
 
     def reserve(self, currency, amount=None, remaining=None,total=None):
         # Persist BEFORE sending a tap. An unknown outcome must never be paid again.
@@ -187,7 +202,7 @@ class ScheduledRunner:
             cfg['_handoff'] = lambda: self.daily.due()
             if ranking_mode:
                 self.daily.begin()
-                _, _, weekend = policy(self.daily.clock())
+                weekend = self.daily.allowed('star')
                 cfg['ranking']['allow_star'] = weekend
                 # Missing weekend images blocks star spending, but free/P can still run.
                 if weekend and not all(cfg['ranking'].get(k) for k in ('paid', 'star_confirm')):
@@ -197,7 +212,8 @@ class ScheduledRunner:
                 cfg['_daily'] = self.daily
                 cfg['recovery'].update(target='ranking', goal=cfg['ranking']['lobby'],
                                        steps=cfg['schedule']['ranking_steps'])
-                self.app.emit('한국시간 랭킹 시작 · '+('주말 20시 · 무료/P/별' if weekend else '평일 13시 · 무료/P · 별 사용 금지'))
+                extra=self.daily.entry.get('one_off_star_started') and self.daily.config.get('one_off_star_date')==self.daily.day
+                self.app.emit('한국시간 랭킹 시작 · '+('오늘 1회 승인 · 무료/P/별' if extra else '주말 20시 · 무료/P/별' if weekend else '평일 13시 · 무료/P · 별 사용 금지'))
             else:
                 cfg['recovery']['target'] = 'league'
                 self.app.emit('리그 진행 · 다음 랭킹 시간까지 대기 (평일 13시 / 주말 20시, 한국시간)')
@@ -239,7 +255,7 @@ def guard_action(daily, machine, action, results, config):
         if (not r.get('paid') and not any(found(r[k]) for k in ('series','points','refresh'))):
             raise SafetyStop('다음 랭킹 갱신 재화 미확인 · 별 갱신 이미지를 먼저 등록하세요.')
         exhausted = config.get('exhausted')
-        weekday_star_only = (not policy(daily.clock())[2] and machine.stable(r['paid'], {})
+        weekday_star_only = (not daily.allowed('star') and machine.stable(r['paid'], {})
                              and not any(found(r[k]) for k in ('series','points','refresh')))
         daily.exhausted_frames = getattr(daily,'exhausted_frames',0)+1 if exhausted and found(exhausted) else 0
         if weekday_star_only or daily.exhausted_frames>=3:

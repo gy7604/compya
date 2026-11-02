@@ -18,6 +18,18 @@ def fixture():
 def visible(*keys):return dict.fromkeys(keys,True)
 
 class RankingTests(unittest.TestCase):
+    def test_promotion_preserves_phase_counts_and_has_bounded_retries(self):
+        records,config=fixture();r=new_button('promotion');r.update(id='promotion',enabled=True,kind='condition',template='promotion.png');records.append(r);config['promotion']='promotion'
+        m=RankingMachine(config,records,100);m.phase='returning';m.completed=12
+        self.assertEqual([m.observe(visible('promotion'),t) for t in range(3)],[None,None,'promotion'])
+        self.assertEqual(m.phase,'returning');self.assertEqual(m.completed,12)
+        self.assertIsNone(m.observe({},3))
+        self.assertIsNone(m.observe(visible('promotion'),4))
+        self.assertIsNone(m.observe(visible('promotion'),5))
+        self.assertEqual(m.observe(visible('promotion'),10),'promotion')
+        self.assertEqual(m.observe(visible('promotion'),18),'promotion')
+        with self.assertRaises(SafetyStop):m.observe(visible('promotion'),26)
+
     def machine(self,target=2):
         records,config=fixture();return RankingMachine(config,records,target)
     def frames(self,m,found,start):return [m.observe(found,start+i) for i in range(3)]

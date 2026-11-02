@@ -22,6 +22,14 @@ def validate(records):
         ids.add(r['id'])
         if r.get('kind', 'normal') not in ('normal', 'condition', 'step'):
             raise ValueError('이미지 용도가 올바르지 않습니다.')
+        if type(r.get('video_skip',False)) is not bool:
+            raise ValueError('영상 스킵 사용 여부가 올바르지 않습니다.')
+        if type(r.get('video_text_mask',False)) is not bool or (r.get('video_text_mask') and not r.get('video_skip')):
+            raise ValueError('영상 글자 인식은 영상 스킵 이미지에만 사용할 수 있습니다.')
+        if any(type(r.get(k,False)) is not bool for k in ('video_intro','video_intro_end')) or (r.get('video_intro') and not r.get('video_skip')):
+            raise ValueError('소개 영상 시작/종료 이미지 설정이 올바르지 않습니다.')
+        if r.get('video_skip') and (r.get('kind')!='condition' or not r.get('roi') or r.get('click_mode')!='fixed'):
+            raise ValueError('영상 스킵은 감지 전용 이미지, 검색 영역, 고정 터치 위치가 필요합니다.')
         if r.get('click_mode', 'center') not in ('center', 'fixed'):
             raise ValueError('클릭 위치 방식이 올바르지 않습니다.')
         if r.get('click_mode') == 'fixed':

@@ -13,6 +13,48 @@ from test_ranking import fixture, visible
 
 
 class ScheduleTests(unittest.TestCase):
+    def test_one_off_star_lobby_does_not_take_weekday_finish_branch(self):
+        records,cfg=fixture();cfg['allow_star']=True
+        machine=RankingMachine(cfg,records,100)
+        config=defaults();config['one_off_star_date']='2026-11-02'
+        with tempfile.TemporaryDirectory() as root:
+            daily=DailyRun(root,config,lambda:datetime(2026,11,2,18,tzinfo=KST));daily.begin()
+            seen=visible('lobby','disabled','paid')
+            for now in range(3):
+                action=machine.observe(seen,now)
+                guard_action(daily,machine,action,{k:(v,) for k,v in seen.items()},config)
+            self.assertFalse(machine.finished)
+
+    def test_one_off_stars_resume_done_day_once_and_expire(self):
+        with tempfile.TemporaryDirectory() as root:
+            now=[datetime(2026,11,2,18,tzinfo=KST)]
+            config=defaults();clock=lambda:now[0]
+            daily=DailyRun(root,config,clock);daily.begin();daily.completed(10);daily.finish('weekday done')
+            config['one_off_star_date']='2026-11-02'
+            resumed=DailyRun(root,config,clock)
+            self.assertTrue(resumed.due());resumed.begin()
+            self.assertEqual(resumed.entry['completed'],10)
+            self.assertTrue(resumed.allowed('star'))
+            resumed.reserve('star',50,6,12)
+            restart=DailyRun(root,config,clock);restart.begin()
+            self.assertEqual(restart.entry['pending'],'star')
+            with self.assertRaises(SafetyStop):restart.reserve('star',50,6,12)
+            restart.verified();restart.finish('all exhausted')
+            self.assertFalse(DailyRun(root,config,clock).due())
+            now[0]=datetime(2026,11,3,13,tzinfo=KST)
+            next_day=DailyRun(root,config,clock);next_day.begin()
+            self.assertFalse(next_day.allowed('star'))
+
+    def test_one_off_cannot_reopen_blocked_or_bypass_start_time(self):
+        with tempfile.TemporaryDirectory() as root:
+            config=defaults();config['one_off_star_date']='2026-11-02'
+            daily=DailyRun(root,config,lambda:datetime(2026,11,2,12,tzinfo=KST))
+            self.assertFalse(daily.due())
+            with self.assertRaises(SafetyStop):daily.begin()
+            daily.clock=lambda:datetime(2026,11,2,18,tzinfo=KST)
+            daily.begin();daily.finish('unknown',blocked=True)
+            self.assertFalse(daily.due())
+
     def test_observed_final_paid_attempt_finishes_after_result_without_guessing_count(self):
         records,cfg=fixture();machine=RankingMachine(cfg,records,100)
         with tempfile.TemporaryDirectory() as root:

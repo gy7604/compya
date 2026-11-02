@@ -42,6 +42,32 @@ class Matcher:
         return bool(contrast_ok and color_ok and score >= self.threshold), (x+loc[0]+tw//2, y+loc[1]+th//2), float(score), (w, h)
 
 
+class OverlayMatcher(Matcher):
+    """Recognize neutral light lettering independently of the moving video background."""
+    @staticmethod
+    def letters(image):
+        return ((image.min(2)>140)&((image.max(2).astype(np.int16)-image.min(2))<30)).astype(np.uint8)*255
+
+    def __init__(self,path,threshold=.68,roi=None):
+        super().__init__(path,threshold,roi)
+        color=cv2.imdecode(np.fromfile(Path(path),np.uint8),cv2.IMREAD_COLOR)
+        self.template=self.letters(color)
+        if self.template.std()<2:raise ValueError('영상 글자 형태가 명확하지 않습니다.')
+
+    def find(self,png):
+        screen=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_COLOR)
+        if screen is None:raise ValueError('ADB 화면 PNG 해독 실패')
+        h,w=screen.shape[:2];x,y,rw,rh=self.roi or (0,0,w,h)
+        if min(x,y)<0 or min(rw,rh)<=0 or x+rw>w or y+rh>h:raise ValueError('검색 영역이 화면을 벗어납니다.')
+        region=self.letters(screen[y:y+rh,x:x+rw]);th,tw=self.template.shape
+        if th>rh or tw>rw:raise ValueError('템플릿이 검색 영역보다 큽니다.')
+        scores=cv2.matchTemplate(region,self.template,cv2.TM_CCOEFF_NORMED)
+        scores=np.where(np.isfinite(scores),scores,-1).astype(np.float32)
+        _,score,_,loc=cv2.minMaxLoc(scores)
+        patch=region[loc[1]:loc[1]+th,loc[0]:loc[0]+tw]
+        return bool(patch.std()>=2 and score>=self.threshold),(x+loc[0]+tw//2,y+loc[1]+th//2),float(score),(w,h)
+
+
 class PriceMatcher(Matcher):
     """Reject even a single changed price digit; broad button correlation is insufficient."""
     def find(self, png):

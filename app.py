@@ -24,7 +24,7 @@ from ranking import RankingStore, RankingMachine, default_ranking, validate_rank
 from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
 from progress import ProgressStore, ProgressClicker, default_progress, validate_progress
 from ranking_schedule import ScheduleStore, ScheduledRunner
-from interruptions import CoachAdvice
+from interruptions import CoachAdvice, VideoSkipper
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -388,7 +388,7 @@ class App:
         last_click=None
         recovery=ranking=None
         try:
-            from vision import Matcher,PriceMatcher
+            from vision import Matcher,PriceMatcher,OverlayMatcher
             from registry import validate
             validate(cfg['buttons'])
             rules = cfg.get('rules', [])
@@ -403,6 +403,9 @@ class App:
             recovery=RecoveryMachine(recovery_config,cfg['buttons'])
             if cfg.get('_activate_route'):recovery.active=True
             coach=CoachAdvice()
+            video_keys=[r['id'] for r in cfg['buttons'] if r['enabled'] and r.get('video_skip') is True]
+            video_ends=[r['id'] for r in cfg['buttons'] if r['enabled'] and r.get('video_intro_end') is True]
+            video=VideoSkipper(video_keys,[r['id'] for r in cfg['buttons'] if r['id'] in video_keys and r.get('video_intro') is True],video_ends)
             coach_matcher=Matcher(ROOT/'assets'/'coach_advice.png',.94,[265,120,450,215]) if cfg.get('coach_advice') and (ROOT/'assets'/'coach_advice.png').exists() else None
             watchdog=StallWatch(recovery_config.get('stall_seconds',180))
             transition_watch=TransitionWatch()
@@ -422,11 +425,13 @@ class App:
             if notification_config['enabled']:
                 referenced.update(notification_config['watch'])
             if ranking_config['enabled']:
-                referenced.update(ranking_config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm','refresh_dialog','points_confirm','star_confirm') if ranking_config.get(key))
+                referenced.update(ranking_config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm','refresh_dialog','points_confirm','star_confirm','promotion') if ranking_config.get(key))
                 if cfg.get('_daily'):
                     referenced.update(cfg['schedule'][key] for key in ('points_price','star_price','exhausted') if cfg['schedule'].get(key))
             if recovery_config['enabled']:
                 referenced.update([recovery_config['goal']]+recovery_config['steps']+recovery_config['popups'])
+            referenced.update(video_keys)
+            referenced.update(video_ends)
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
                        (r.get('kind', 'normal') == 'normal' or r['id'] in referenced)}
             if not records:
@@ -434,6 +439,9 @@ class App:
             color_keys={ranking_config[key] for key in ('series','disabled','refresh','points','paid','reward','points_confirm','star_confirm') if ranking_config.get(key)} if ranking_config['enabled'] else set()
             matchers = {key: Matcher(self.registry.resolve(r['template']), r['threshold'], r['roi'], **({'color_tolerance':25} if key in color_keys else {}))
                         for key, r in records.items()}
+            for key in video_keys:
+                r=records[key]
+                if r.get('video_text_mask') is True:matchers[key]=OverlayMatcher(self.registry.resolve(r['template']),r['threshold'],r['roi'])
             if cfg.get('_daily'):
                 for field in ('points_price','star_price'):
                     key=cfg['schedule'].get(field)
@@ -577,7 +585,25 @@ class App:
                             self.emit(f'재접속 화면 해상도 전환 대기 · 현재 {recovery_size}')
                             heartbeat=orientation_now
                         self.stop.wait(.2);continue
-                results = {name: matcher.find(png) for name, matcher in matchers.items()}
+                video_results={key:matchers[key].find(png) for key in video_keys+video_ends}
+                if video_results:
+                    video_size=next(iter(video_results.values()))[3]
+                    if (dimensions is None or dimensions==video_size) and all(v==video_size for v in expected.values()):
+                        video_now=time.monotonic()
+                        video_action=video.observe({key:result[0] for key,result in video_results.items()},video_now)
+                        if video_action:
+                            _,matched_point,score,_=video_results[video_action]
+                            point=click_point(records[video_action],matched_point,video_size)
+                            if not cfg['dry'] and not self.stop.is_set():adb.tap(point)
+                            label=('모의 영상 스킵' if cfg['dry'] else '영상 스킵')+(' · 소개 이어 넘기기' if not video_results[video_action][0] else '')
+                            self.emit(f'{label} · {records[video_action]["name"]} · 좌표={point} 점수={score:.3f}')
+                        if video.resumed:
+                            machine=WorkflowMachine(records,rules,video_now,detection_frames=frames)
+                            transition_watch=TransitionWatch()
+                        if video.hold:
+                            watchdog.reset();self.stop.wait(.1);continue
+                results = dict(video_results)
+                results.update({name: matcher.find(png) for name, matcher in matchers.items() if name not in video_results})
                 size = next(iter(results.values()))[3]
                 if (dimensions is not None and dimensions != size) or any(v != size for v in expected.values()):
                     raise RuntimeError('등록 이미지와 화면 해상도가 다릅니다. 현재 해상도로 다시 등록하세요.')
