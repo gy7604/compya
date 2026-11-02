@@ -142,6 +142,34 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual((backup/'V26Macro.exe').read_bytes(), b'MZold')
             self.assert_user_data(root)
 
+    def test_season_assets_and_ocr_runtime_delivered_without_overwriting_user_data(self):
+        from updates import safe_member
+        for name in ('PriceOCR.exe','assets/league_next_match.png','assets/league_round_label.png'):
+            self.assertTrue(safe_member('V26Macro/'+name))
+        self.assertFalse(safe_member('V26Macro/league_season.json'))
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            root,package=self.prepare_install(folder)
+            (root/'PriceOCR.exe').write_bytes(b'MZoldocr')
+            (root/'league_season.json').write_bytes(b'private progress')
+            (package/'PriceOCR.exe').write_bytes(b'MZnewocr')
+            (package/'assets').mkdir()
+            for name in ('league_next_match.png','league_round_label.png'):(package/'assets'/name).write_bytes(b'new image')
+            (root/'assets/league_next_match.png').write_bytes(b'preserved image')
+            backup=replace_runtime(root,package)
+            self.assertEqual((root/'PriceOCR.exe').read_bytes(),b'MZnewocr')
+            self.assertEqual((backup/'PriceOCR.exe').read_bytes(),b'MZoldocr')
+            self.assertEqual((root/'assets/league_next_match.png').read_bytes(),b'preserved image')
+            self.assertEqual((root/'assets/league_round_label.png').read_bytes(),b'new image')
+            self.assertEqual((root/'league_season.json').read_bytes(),b'private progress')
+            self.assert_user_data(root)
+
+    def test_invalid_optional_ocr_runtime_does_not_start_replacement(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            root,package=self.prepare_install(folder)
+            (package/'PriceOCR.exe').write_bytes(b'bad')
+            with self.assertRaises(ValueError):replace_runtime(root,package)
+            self.assertEqual((root/'V26Macro.exe').read_bytes(),b'MZold')
+
     def test_failed_replacement_rolls_back(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
             root, package = self.prepare_install(folder)

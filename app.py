@@ -16,6 +16,7 @@ from version import VERSION
 from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
 from league_count import LeagueCounter
+from league_season import SeasonProgress,RoundReader
 from collections import deque
 from log_view import concise_status,important_message
 from stall import StallWatch,TransitionWatch
@@ -110,6 +111,8 @@ class App:
             combo.grid(row=row,column=1,sticky='w')
         self.league_count_text=tk.StringVar(value='이번 실행 · 리그 완료 0경기 (시작마다 초기화)')
         ttk.Label(root,textvariable=self.league_count_text).pack(anchor='w',padx=12,pady=3)
+        self.league_season_text=tk.StringVar(value=SeasonProgress(ROOT).text())
+        ttk.Label(root,textvariable=self.league_season_text).pack(anchor='w',padx=12,pady=3)
         update_bar = ttk.Frame(root)
         update_bar.pack(fill='x', padx=12, pady=5)
         self.update_status = tk.StringVar(value=f'현재 v{VERSION} · 시작 시 업데이트 확인')
@@ -416,6 +419,11 @@ class App:
             count_ids={r['name']:r['id'] for r in cfg['buttons'] if r['enabled'] and r['template']}
             counter=LeagueCounter(count_ids.get(cfg.get('league_start',''),''),count_ids.get(cfg.get('league_result',''),''),frames=speed_settings(cfg.get('speed',DEFAULT_MODE))[0])
             count_enabled=not ranking_config['enabled'] and bool(counter.start and counter.result)
+            season=SeasonProgress(ROOT,dry=cfg['dry'])
+            round_reader=RoundReader(ROOT) if count_enabled else None
+            def season_event():
+                if hasattr(self,'events'):self.events.put(('league_season',('모의 · ' if cfg['dry'] else '')+season.text(ranking_config['enabled'])))
+            season_event()
             if hasattr(self,'events'):self.events.put(('league_count',0,cfg['dry'],count_enabled))
             referenced = {key for rule in rules if rule['enabled'] for key in
                           [rule['trigger'], rule['success']]+[s['button'] for s in rule['steps']] if key}
@@ -585,6 +593,9 @@ class App:
                             self.emit(f'재접속 화면 해상도 전환 대기 · 현재 {recovery_size}')
                             heartbeat=orientation_now
                         self.stop.wait(.2);continue
+                if round_reader:
+                    round_=round_reader.observe(png,time.monotonic(),self.stop)
+                    if round_ is not None and season.lobby(round_):season_event()
                 video_results={key:matchers[key].find(png) for key in video_keys+video_ends}
                 if video_results:
                     video_size=next(iter(video_results.values()))[3]
@@ -661,8 +672,10 @@ class App:
                         heartbeat=now
                     self.stop.wait(max(.1,interval));continue
                 if count_enabled and counter.observe({key:result[0] for key,result in results.items()}):
+                    if season.result():season_event()
                     self.events.put(('league_count',counter.completed,cfg['dry'],True))
                     self.emit(f'{"모의 집계" if cfg["dry"] else "리그 경기 완료"} · 이번 실행 {counter.completed}경기')
+                if count_enabled and counter.armed and results[counter.start][0] and not results[counter.result][0] and season.playing():season_event()
                 if (count_enabled and counter.result_frames>=counter.frames
                         and cfg.get('_handoff') and cfg['_handoff']()):
                     cfg['_yielded']=True
@@ -846,6 +859,9 @@ class App:
             except queue.Empty:
                 break
             if isinstance(msg, tuple):
+                if msg[0]=='league_season':
+                    if not self.closing:self.league_season_text.set(msg[1])
+                    continue
                 if msg[0]=='league_count':
                     if not self.closing:
                         self.league_count_text.set((f'{"모의 집계" if msg[2] else "이번 실행"} · 리그 완료 {msg[1]}경기 (시작마다 초기화)') if msg[3] else '리그 경기 집계 미사용 · 경기 중/결과 이미지를 선택하세요.')

@@ -41,6 +41,9 @@ def replace_runtime(root, package):
     backup = root/'.updates'/('backup_'+uuid.uuid4().hex)
     backup.mkdir()
     names = ['V26Macro.exe', '_internal', 'UpdateHelper.exe']
+    if (package/'PriceOCR.exe').exists():
+        if (package/'PriceOCR.exe').read_bytes()[:2]!=b'MZ':raise ValueError('새 글자 인식 실행 파일을 확인할 수 없습니다.')
+        names.append('PriceOCR.exe')
     names += [name for name in ('README.md', 'TEST_RESULTS.md') if (package/name).exists()]
     moved, installed = [], []
     try:
@@ -53,7 +56,7 @@ def replace_runtime(root, package):
             installed.append(name)
         assets = root/'assets'
         assets.mkdir(exist_ok=True)
-        for name in ('catcher.png', 'app.ico'):
+        for name in ('catcher.png', 'app.ico','coach_advice.png','league_next_match.png','league_round_label.png'):
             if not (assets/name).exists() and (package/'assets'/name).exists():
                 shutil.copy2(package/'assets'/name, assets/name)
     except Exception:
