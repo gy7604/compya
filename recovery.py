@@ -7,7 +7,7 @@ from engine import SafetyStop
 PACKAGE='com.com2us.futurecpb.android.google.global.normal'
 
 def default_recovery():
-    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],max_launches=3,stall_enabled=False,stall_seconds=180,restart_player=True,player_console='',player_index=0)
+    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],checkpoints=[],max_launches=3,stall_enabled=False,stall_seconds=180,restart_player=True,player_console='',player_index=0)
 
 def validate_draft(config):
     if config.get('target','ranking') not in ('ranking','league'):raise ValueError('복귀 대상 모드를 확인하세요.')
@@ -21,17 +21,20 @@ def validate_draft(config):
     if not isinstance(config.get('steps'),list) or not isinstance(config.get('popups'),list):raise ValueError('복구 이미지 목록이 올바르지 않습니다.')
     refs=[config.get('goal','')]+config['steps']+config['popups']
     if any(not isinstance(key,str) for key in refs) or len(config['steps'])>30 or len(config['popups'])>20:raise ValueError('복구 이미지 목록을 확인하세요.')
+    checkpoints=config.get('checkpoints',[])
+    if not isinstance(checkpoints,list) or len(checkpoints)>20 or any(not isinstance(key,str) for key in checkpoints):raise ValueError('리그 정산 복귀 이미지 목록을 확인하세요.')
 
 def validate_recovery(config,records):
     validate_draft(config)
     if not config['enabled']:return
     if not config['goal'] or not config['steps']:raise ValueError('재접속 완료 이미지와 접속부터 목표 모드까지 진입 순서를 등록하세요.')
-    refs=[config['goal']]+config['steps']+config['popups']
+    checkpoints=config.get('checkpoints',[]) if config.get('target')=='league' else []
+    refs=[config['goal']]+config['steps']+config['popups']+checkpoints
     available={r['id']:r for r in records if r['enabled'] and r['template']}
     if len(refs)!=len(set(refs)):raise ValueError('복구 완료·진입 단계·팝업 이미지는 서로 다르게 등록하세요.')
     for key in refs:
         r=available.get(key)
-        if not r or (key!=config['goal'] and r.get('kind','normal')=='normal'):raise ValueError('재접속 이미지는 감지 전용 또는 규칙 전용으로 등록하고 사용을 켜세요.')
+        if not r or (key not in [config['goal']]+checkpoints and r.get('kind','normal')=='normal'):raise ValueError('재접속 이미지는 감지 전용 또는 규칙 전용으로 등록하고 사용을 켜세요.')
     for key in config['popups']:
         if available[key].get('click_mode')!='fixed':raise ValueError('광고는 고유한 팝업 이미지를 등록하고 닫기 클릭 위치를 지정하세요.')
 
@@ -61,6 +64,7 @@ class RecoveryMachine:
         self.counts={};self.since={};self.absent=0;self.next_allowed=float('-inf');self.events=[]
         self.route_since=None
         self.popup_taps=0
+        self.checkpoints=config.get('checkpoints',[]) if config.get('target')=='league' else []
 
     def check_timeout(self,now):
         if not self.active:
@@ -119,7 +123,7 @@ class RecoveryMachine:
         if not self.config['enabled']:return None
         self.check_timeout(now)
         if not self.running:self.hold=True;return None
-        refs=[self.config['goal']]+self.config['steps']+self.config['popups']
+        refs=[self.config['goal']]+self.config['steps']+self.config['popups']+self.checkpoints
         for key in refs:
             if found.get(key,False):
                 if not self.counts.get(key,0):self.since[key]=now
@@ -155,9 +159,10 @@ class RecoveryMachine:
                 self.events.append(f'접속 광고 닫기 · {self.records[key]["name"]}')
                 return key
             return None
-        if self.counts.get(self.config['goal'],0)>=3:
+        checkpoint=next((key for key in self.checkpoints if self.counts.get(key,0)>=3),None)
+        if self.counts.get(self.config['goal'],0)>=3 or checkpoint:
             self.active=False;self.hold=True;self.restored=True;self.pending=None;self.index=0
-            self.events.append('목표 모드 복귀 확인 · 완료 횟수 보존 후 매크로 재개');return None
+            self.events.append('리그 정산 화면 복귀 확인 · 시즌 진행 재개' if checkpoint else '목표 모드 복귀 확인 · 완료 횟수 보존 후 매크로 재개');return None
         if now<self.next_allowed:return None
         if self.pending:
             next_key=self.config['steps'][self.index+1] if self.index+1<len(self.config['steps']) else self.config['goal']

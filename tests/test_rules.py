@@ -24,6 +24,47 @@ def fixtures():
 
 
 class RuleTests(unittest.TestCase):
+    def test_confirmed_league_result_releases_stale_simulation_wait(self):
+        records,rule=fixtures()
+        rule.update(finish='resume',once=False)
+        m=WorkflowMachine(records,[rule],0)
+        for t in range(3):m.observe({'goal':True},t)
+        self.assertIsNotNone(m.active)
+        m.league_result(3)
+        self.assertIsNone(m.active)
+        self.assertIsNone(m.queued)
+        self.assertFalse(m.finished)
+        for t in (4,5):self.assertIsNone(m.observe({'normal':True},t))
+        self.assertEqual(m.observe({'normal':True},6),'normal')
+        self.assertTrue(any('이전 경기' in event for event in m.events))
+
+    def test_league_result_clears_queued_rule_and_old_normal_latch(self):
+        records,rule=fixtures()
+        m=WorkflowMachine(records,[rule],0)
+        for t in range(3):m.observe({'normal':True},t)
+        for t in range(3,6):m.observe({'normal':True,'goal':True},t)
+        self.assertIsNotNone(m.queued)
+        self.assertIsNotNone(m.normal.pending)
+        m.completed.add('earlier-once-rule')
+        m.league_result(6)
+        self.assertIsNone(m.queued)
+        self.assertIsNone(m.normal.pending)
+        self.assertIn('earlier-once-rule',m.completed)
+        self.assertIsNone(m.observe({'normal':True},7))
+        self.assertIsNone(m.observe({'normal':True},8))
+        self.assertEqual(m.observe({'normal':True},9),'normal')
+
+    def test_result_cleanup_preserves_repeat_rule_rearming(self):
+        records,rule=fixtures();rule.update(finish='resume',once=False)
+        m=WorkflowMachine(records,[rule],0)
+        for t in range(3):m.observe({'goal':True},t)
+        m.league_result(3)
+        for t in range(4,8):m.observe({'goal':True},t)
+        self.assertIsNone(m.active)
+        for t in range(8,11):m.observe({},t)
+        for t in range(11,14):m.observe({'goal':True},t)
+        self.assertIsNotNone(m.active)
+
     def test_normal_no_image_can_wait_for_a_day(self):
         records,_=fixtures()
         m=WorkflowMachine(records,[],0,timeout=1)

@@ -91,6 +91,22 @@ class WorkflowMachine:
     def new_normal(self, now):
         return ActionMachine(now, policies=self.records, priority_order=self.normal_ids, detection_frames=self.detection_frames)
 
+    def league_result(self, now):
+        """Discard in-game waits once a new league result is confirmed.
+
+        Preserve once-only history and rearming latches. Call once per
+        counted game, never on every frame of the same result screen.
+        """
+        if self.active or self.queued:
+            self.events.append('리그 결과 확인 · 이전 경기의 대기 규칙 정리 · 결과 처리 계속')
+        self.active = self.queued = None
+        self.phase = 'idle'
+        self.visible = self.absent = 0
+        self.step_visible_since = None
+        self.condition_counts = {}
+        self.normal = self.new_normal(now)
+        self.normal.next_allowed = max(self.next_allowed, now)
+
     @property
     def pending(self):
         if self.active:

@@ -441,6 +441,7 @@ class App:
                     referenced.update(cfg['schedule'][key] for key in ('points_price','star_price','exhausted') if cfg['schedule'].get(key))
             if recovery_config['enabled']:
                 referenced.update([recovery_config['goal']]+recovery_config['steps']+recovery_config['popups'])
+                if recovery_config.get('target')=='league':referenced.update(recovery_config.get('checkpoints',[]))
             referenced.update(video_keys)
             referenced.update(video_ends)
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
@@ -675,6 +676,9 @@ class App:
                         heartbeat=now
                     self.stop.wait(max(.1,interval));continue
                 if count_enabled and counter.observe({key:result[0] for key,result in results.items()}):
+                    machine.league_result(now)
+                    transition_watch=TransitionWatch()
+                    watchdog.reset()
                     if season.result():season_event()
                     self.events.put(('league_count',counter.completed,cfg['dry'],True))
                     self.emit(f'{"모의 집계" if cfg["dry"] else "리그 경기 완료"} · 이번 실행 {counter.completed}경기')

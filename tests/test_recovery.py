@@ -17,6 +17,35 @@ def fixture():
 def visible(*keys):return dict.fromkeys(keys,True)
 
 class RecoveryTests(unittest.TestCase):
+    def test_league_settlement_checkpoint_returns_control_without_tapping_it(self):
+        records,cfg=fixture()
+        checkpoint=new_button('settlement')
+        checkpoint.update(id='settlement',enabled=True,template='settlement.png')
+        records.append(checkpoint)
+        cfg.update(target='league',checkpoints=['settlement'])
+        m=RecoveryMachine(cfg,records);m.active=True
+        self.assertEqual(self.frames(m,visible('settlement'),0),[None,None,None])
+        self.assertFalse(m.active);self.assertTrue(m.restored)
+        self.assertEqual(m.launches,0)
+        self.assertIn('정산',m.events[-1])
+        m.observe(visible('settlement'),3)
+        self.assertFalse(m.hold)
+
+    def test_checkpoint_requires_three_frames_and_does_not_affect_ranking(self):
+        records,cfg=fixture();cfg.update(target='league',checkpoints=['ad2'],popups=['ad'])
+        m=RecoveryMachine(cfg,records);m.active=True
+        m.observe(visible('ad2'),0);m.observe({},1);m.observe(visible('ad2'),2)
+        self.assertTrue(m.active)
+        cfg['target']='ranking';m=RecoveryMachine(cfg,records);m.active=True
+        self.frames(m,visible('ad2'),0)
+        self.assertTrue(m.active);self.assertFalse(m.restored)
+
+    def test_checkpoint_configuration_rejects_missing_duplicate_or_disabled_images(self):
+        records,cfg=fixture();cfg['target']='league'
+        for value in ('goal', ['missing'], ['goal'], ['ad','ad']):
+            cfg['checkpoints']=value
+            with self.subTest(value=value),self.assertRaises(ValueError):validate_recovery(cfg,records)
+
     def test_existing_midroute_menu_resumes_without_process_restart(self):
         m=self.machine()
         self.assertEqual(self.frames(m,visible('menu'),0),[None,None,'menu'])
