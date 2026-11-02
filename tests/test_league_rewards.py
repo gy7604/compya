@@ -9,6 +9,13 @@ def card(kind='player',new=False,special=False):return dict(kind=kind,new=new,sp
 
 
 class RewardTests(unittest.TestCase):
+    def test_unreadable_player_type_is_not_discarded_or_selected_over_a_special(self):
+        unknown=dict(card(),rarity_known=False)
+        for remaining in (0,1,4):
+            with self.subTest(remaining=remaining),self.assertRaises(SafetyStop):choose_reward([unknown,card('craft')],remaining)
+        self.assertEqual(choose_reward([unknown,card(new=True)],4),('pick',1))
+        self.assertEqual(choose_reward([unknown,card(special=True)],4),('pick',1))
+
     def test_new_then_special_skip_reroll(self):
         cards=[card(special=True),card(new=True),card('craft'),card('enhance')]
         self.assertEqual(choose_reward(cards,4),('pick',1))

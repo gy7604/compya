@@ -16,6 +16,8 @@ def choose_reward(cards, remaining):
     for key in ('new', 'special'):
         chosen=next((i for i,c in enumerate(cards) if c.get(key) and c['kind']=='player'),None)
         if chosen is not None:return ('pick',chosen)
+    if any(c['kind']=='player' and not c.get('rarity_known',True) for c in cards):
+        raise SafetyStop('시즌 선수 카드 종류 판독 불확실 · 특수 카드 보호를 위해 변경/수령 보류')
     if remaining is None:raise SafetyStop('시즌 보상 변경 횟수 미확인 · 임의 선택/변경 없이 확인 필요')
     if remaining>0:return ('reroll',None)
     for kind in ('player','craft','enhance'):
@@ -127,7 +129,8 @@ class LeagueRewards:
             text=self.text(card,stop) if kind=='player' else kind
             normalized=re.sub(r'[^A-Z가-힣]','',text.upper())
             special=any(word in normalized for word in ('SIGNATURE','ALLSTAR','시그니처','올스타'))
-            cards.append(dict(kind=kind,new=bool(hits.get('new')),special=special));texts.append(text)
+            known=special or any(word in normalized for word in ('SEASON','LIVE','NORMAL','시즌','라이브','일반'))
+            cards.append(dict(kind=kind,new=bool(hits.get('new')),special=special,rarity_known=kind!='player' or known));texts.append(text)
             yellow=(card[:,:,2]>210)&(card[:,:,1]>180)&(card[:,:,0]<90)
             if yellow[:,:7].sum()+yellow[:,-7:].sum()>300:selected.append(index)
         x,y,w,h=self.cfg['counter_roi'];text=self.text(im[y:y+h,x:x+w],stop)
