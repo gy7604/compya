@@ -1,0 +1,34 @@
+name: Owner approved prebuilt Compya publication
+run-name: Owner approved prebuilt Compya publication
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.actor == 'gy7604' && github.event.issue.number == 3 && startsWith(github.event.comment.body, '/compya-publish approve ') && 'compya-publication' || format('compya-publish-ignored-{0}', github.run_id) }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: >-
+      vars.COMPYA_PUBLICATION_ENABLED == 'true' && github.actor == 'gy7604' &&
+      github.event.issue.number == 3 && github.event.issue.title == 'COMPYA-PUBLICATION-CONTROL-v1' &&
+      github.event.issue.user.login == 'gy7604' && !github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/compya-publish approve ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: write
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c483e136dddc5a2075a74fb486177c087b8074c5
+          sparse-checkout: tools/release-control
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify approved existing bytes and publish without rebuilding or running the app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPYA_PUBLICATION_ENABLED: ${{ vars.COMPYA_PUBLICATION_ENABLED }}
+        run: python3 -B tools/release-control/compya_publish.py --event "$GITHUB_EVENT_PATH"
