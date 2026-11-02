@@ -10,7 +10,7 @@ def build_archive(root, output):
         for path in sorted(root.rglob('*')):
             rel = path.relative_to(root)
             permitted = (len(rel.parts) == 1 and rel.name in (
-                'V26Macro.exe', 'UpdateHelper.exe', 'README.md', 'TEST_RESULTS.md')) or (
+                'V26Macro.exe', 'UpdateHelper.exe', 'PriceOCR.exe', 'README.md', 'TEST_RESULTS.md')) or (
                 rel.parts[0] == '_internal') or (
                 len(rel.parts) == 2 and rel.parts[0] == 'assets' and rel.name in ('catcher.png', 'app.ico', 'coach_advice.png'))
             if path.is_file() and permitted:

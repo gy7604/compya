@@ -395,7 +395,8 @@ class App:
             progress_config=cfg.get('progress',default_progress())
             notification_config=cfg.get('notifications',default_notifications())
             notifier=NotificationDetector(notification_config,cfg['buttons'])
-            ranking_config=cfg.get('ranking',default_ranking())
+            ranking_config=dict(cfg.get('ranking',default_ranking()))
+            ranking_config['all_attempts']=bool(cfg.get('_daily'))
             ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
             if cfg.get('_daily'):ranking.completed=cfg['_daily'].entry['completed']
             recovery_config=recovery_for_mode(cfg.get('recovery',default_recovery()),ranking_config['enabled'])
@@ -453,7 +454,9 @@ class App:
             self.emit('일반 클릭 우선순위 · ' + ' → '.join(records[key]['name'] for key in machine.normal_ids))
             if progress_config['enabled']:
                 self.emit(f'진행 보조 클릭 ON · 두 이미지 미인식 {float(progress_config["delay"]):g}초 후 / {float(progress_config["interval"]):g}초 간격 / 좌표={tuple(progress_config["point"])}')
-            if ranking_config['enabled']:self.emit(f'랭킹 모드 · 목표 연속 경기 {ranking.target}회 · 연속 경기 우선 · 비활성 확인 시 무료/일반 포인트 갱신 사용 · 별 갱신 설정={ranking_config.get("allow_star",False)}')
+            if ranking_config['enabled']:
+                goal='오늘 허용된 전체 횟수' if cfg.get('_daily') else f'목표 연속 경기 {ranking.target}회'
+                self.emit(f'랭킹 모드 · {goal} · 연속 경기 우선 · 비활성 확인 시 무료/P 갱신 사용 · 별 갱신 설정={ranking_config.get("allow_star",False)}')
             dimensions = None
             previous_state = None
             heartbeat = taps = 0
@@ -613,7 +616,8 @@ class App:
                     machine=WorkflowMachine(records,rules,now,detection_frames=frames)
                     progress=ProgressClicker(progress_config,cfg['buttons'])
                     if ranking_config['enabled']:
-                        self.emit(f'재접속 복구 완료 · 연속 경기 완료 {completed}/{ranking.target}회 유지')
+                        progress_label=f'오늘 완료 {completed}회' if cfg.get('_daily') else f'완료 {completed}/{ranking.target}회'
+                        self.emit(f'재접속 복구 완료 · 연속 경기 {progress_label} 유지')
                     else:
                         self.emit(f'리그 복귀 완료 · 이번 실행 완료 {counter.completed}경기 유지 · 경기 진행 재개')
                 if recovery.hold:
@@ -654,6 +658,17 @@ class App:
                 if cfg.get('_daily'):
                     from ranking_schedule import guard_action
                     daily=cfg['_daily']
+                    currency=next((kind for field,kind in [('points_confirm','points'),('star_confirm','star')]
+                                   if ranking_action and ranking_action==ranking_config.get(field)),None)
+                    if currency and cfg['schedule'].get('ocr_prices',False):
+                        from price_ocr import PriceReader
+                        other=ranking_config.get('star_confirm' if currency=='points' else 'points_confirm')
+                        amount=PriceReader(ROOT/'PriceOCR.exe').verify(
+                            adb,self.stop,lambda:daily.allowed(currency),ranking_action,
+                            ranking_config['refresh_dialog'],other,matchers,records[ranking_action],size)
+                        if amount is None:break
+                        daily.ocr_payment=(ranking_action,amount,time.monotonic())
+                        self.emit(f'랭킹 구매 금액 확인 · {"P포인트" if currency=="points" else "별"} {amount:,} · 3회 일치')
                     daily.price_frames=getattr(daily,'price_frames',{})
                     for key in ('points_price','star_price'):
                         price=cfg['schedule'].get(key)
@@ -679,7 +694,8 @@ class App:
                     if now-heartbeat>=5:
                         labels={'lobby':'무료/별 갱신 상태 확인','series':'연속 경기 대기','lineup':'라인업 경기 진행 대기','departing':'경기 화면 진입 대기','playing':'경기 진행','result_confirm':'결과 확인 버튼 대기','returning':'결과 확인 후 로비 복귀 대기','reward_confirm':'15회 보상 팝업 확인 대기','reward_return':'15회 보상 수령 후 로비 확인 대기','points_confirm':'즉시 갱신 포인트 확인 대기','star_confirm':'즉시 갱신 별 확인 대기','refresh_return':'즉시 갱신 팝업 종료 대기'}
                         scores=' / '.join(f'{records[key]["name"]}={results[key][2]:.3f}({"인식" if results[key][0] else "미인식"})' for key in referenced if key in results)
-                        self.emit(f'랭킹 대기 · {labels[ranking.phase]} · 완료 {ranking.completed}/{ranking.target}회 · {scores}')
+                        progress_label=f'오늘 완료 {ranking.completed}회' if cfg.get('_daily') else f'완료 {ranking.completed}/{ranking.target}회'
+                        self.emit(f'랭킹 대기 · {labels[ranking.phase]} · {progress_label} · {scores}')
                         heartbeat=now
                     self.stop.wait(interval);continue
                 try:action = machine.observe({n: r[0] for n, r in results.items()}, now)

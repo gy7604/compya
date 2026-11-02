@@ -8,7 +8,7 @@ def default_ranking():
 
 
 def validate_ranking_draft(config):
-    for key in ('enabled','allow_star'):
+    for key in ('enabled','allow_star','all_attempts'):
         if type(config.get(key,False)) is not bool:raise ValueError('랭킹 사용 설정이 올바르지 않습니다.')
     for key in default_ranking():
         if key not in ('enabled','allow_star') and not isinstance(config.get(key,''),str):
@@ -86,9 +86,11 @@ class RankingMachine:
         if self.phase=='playing':
             self.hold=lobby or found.get(result,False)
             if self.stable(result,found):
-                self.completed+=1;self.events.append(f'랭킹 연속 경기 결과 확인 · 완료 {self.completed}/{self.target}회')
+                self.completed+=1
+                total=f'오늘 완료 {self.completed}회' if self.config.get('all_attempts') else f'완료 {self.completed}/{self.target}회'
+                self.events.append('랭킹 연속 경기 결과 확인 · '+total)
                 self.hold=True
-                if self.completed>=self.target:
+                if not self.config.get('all_attempts') and self.completed>=self.target:
                     self.target_reached=True
                     if not self.reward:self.finished=True;return None
                 self.phase='result_confirm';self.counts={}
@@ -140,7 +142,7 @@ class RankingMachine:
                     if self.stable(refresh,found) and not found.get(paid,False):
                         key=refresh;self.phase='series';self.events.append('랭킹 연속 경기 비활성 확인 · 무료 갱신 1회')
                     elif self.stable(points,found) and not found.get(paid,False):
-                        key=points;self.phase='points_confirm';self.events.append('랭킹 연속 경기 비활성 확인 · 일반 포인트 갱신 1회 (금액 숫자 미사용)')
+                        key=points;self.phase='points_confirm';self.events.append('랭킹 연속 경기 비활성 확인 · P 갱신 팝업 열기 · 결제 전 재화 확인')
                     elif self.config['allow_star'] and self.stable(paid,found) and not found.get(points,False) and not found.get(refresh,False):
                         key=paid;self.phase='star_confirm';self.events.append('랭킹 연속 경기 비활성 확인 · 허용된 별 갱신 팝업 열기')
         elif self.phase=='series' and self.stable(series,found):key=series;self.phase='lineup'

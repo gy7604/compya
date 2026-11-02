@@ -13,6 +13,16 @@ from test_ranking import fixture, visible
 
 
 class ScheduleTests(unittest.TestCase):
+    def test_scheduled_all_attempts_does_not_stop_at_manual_target(self):
+        records,cfg=fixture();cfg['all_attempts']=True
+        machine=RankingMachine(cfg,records,1)
+        machine.phase='playing'
+        for i in range(3):machine.observe(visible('result'),i)
+        self.assertEqual(machine.completed,1)
+        self.assertFalse(machine.finished)
+        self.assertFalse(machine.target_reached)
+        self.assertTrue(any('오늘 완료 1회' in message for message in machine.events))
+
     def test_supervisor_handoffs_after_session_yield_then_returns_to_league(self):
         from test_recovery import fixture as recovery_fixture
         records, ranking=fixture()

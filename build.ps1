@@ -7,9 +7,11 @@ function Run-Python {
 }
 
 Run-Python -m unittest discover -s tests -v
+Run-Python build_price_ocr.py "$PSScriptRoot/build/helper_dist/PriceOCR.exe"
 Run-Python -m PyInstaller --noconfirm --windowed --onedir --name V26Macro --icon "$PSScriptRoot/assets/app.ico" --distpath "$PSScriptRoot/dist" --workpath "$PSScriptRoot/build/main" --specpath "$PSScriptRoot/build" "$PSScriptRoot/app.py"
 Run-Python -m PyInstaller --noconfirm --windowed --onefile --name UpdateHelper --distpath "$PSScriptRoot/build/helper_dist" --workpath "$PSScriptRoot/build/helper" --specpath "$PSScriptRoot/build" "$PSScriptRoot/updater.py"
 Copy-Item -LiteralPath "$PSScriptRoot/build/helper_dist/UpdateHelper.exe" -Destination "$PSScriptRoot/dist/V26Macro/UpdateHelper.exe"
+Copy-Item -LiteralPath "$PSScriptRoot/build/helper_dist/PriceOCR.exe" -Destination "$PSScriptRoot/dist/V26Macro/PriceOCR.exe"
 New-Item -ItemType Directory -Force "$PSScriptRoot/dist/V26Macro/assets" | Out-Null
 Copy-Item -LiteralPath "$PSScriptRoot/assets/catcher.png", "$PSScriptRoot/assets/app.ico", "$PSScriptRoot/assets/coach_advice.png" -Destination "$PSScriptRoot/dist/V26Macro/assets"
 Copy-Item -LiteralPath "$PSScriptRoot/README.md", "$PSScriptRoot/TEST_RESULTS.md" -Destination "$PSScriptRoot/dist/V26Macro"

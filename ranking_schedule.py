@@ -1,6 +1,7 @@
 """Korean daily policy and durable purchase intents, independent of the PC clock zone."""
 from datetime import datetime, timedelta, timezone
 import json
+import time
 from pathlib import Path
 from contextlib import contextmanager
 from engine import SafetyStop
@@ -23,13 +24,14 @@ def policy(now):
 
 def defaults():
     return dict(enabled=False, ranking_steps=[], points_limit=100, star_limit=100,
-                free_limit=100, exhausted='', points_price='', star_price='')
+                free_limit=100, exhausted='', points_price='', star_price='',ocr_prices=False)
 
 
 def validate(config, records, ranking, recovery):
     if type(config.get('enabled', False)) is not bool:
         raise ValueError('랭킹 일정 사용 설정을 확인하세요.')
     if not config.get('enabled'):return
+    if type(config.get('ocr_prices',False)) is not bool:raise ValueError('변경 금액 인식 설정을 확인하세요.')
     from ranking import validate_ranking
     from recovery import validate_recovery
     validate_ranking(dict(ranking, enabled=True, allow_star=False), records)
@@ -127,7 +129,7 @@ class DailyRun:
         day, due, weekend = policy(self.clock())
         return day == self.day and due and (currency != 'star' or weekend)
 
-    def reserve(self, currency):
+    def reserve(self, currency, amount=None):
         # Persist BEFORE sending a tap. An unknown outcome must never be paid again.
         if not self.allowed(currency):raise SafetyStop('현재 한국시간의 재화 사용 조건을 벗어났습니다.')
         if self.entry['pending']:
@@ -136,6 +138,7 @@ class DailyRun:
             raise SafetyStop('하루 '+currency+' 갱신 한도 도달')
         self.entry['purchases'][currency] += 1
         self.entry['pending'] = currency
+        if amount is not None:self.entry['last_payment']=dict(currency=currency,amount=amount)
         self.save()
 
     def verified(self):
@@ -185,7 +188,7 @@ class ScheduledRunner:
                 if weekend and not all(cfg['ranking'].get(k) for k in ('paid', 'star_confirm')):
                     cfg['ranking']['allow_star'] = False
                 validate_ranking(cfg['ranking'], cfg['buttons'])
-                cfg['games'] = 10000
+                cfg['ranking']['all_attempts'] = True
                 cfg['_daily'] = self.daily
                 cfg['recovery'].update(target='ranking', goal=cfg['ranking']['lobby'],
                                        steps=cfg['schedule']['ranking_steps'])
@@ -235,11 +238,20 @@ def guard_action(daily, machine, action, results, config):
     currency = next((kind for key, kind in [('refresh','free'),('points_confirm','points'),
                                             ('star_confirm','star')] if action and action == r[key]), None)
     if currency:
+        amount=None
         if currency != 'free':
-            price = config.get(currency+'_price')
-            if not price or not found(price) or getattr(daily,'price_frames',{}).get(price,0)<3:
-                raise SafetyStop('랭킹 '+currency+' 구매 금액 미확인 · 금액까지 포함한 확인 이미지를 등록하세요.')
-        daily.reserve(currency)
+            if config.get('ocr_prices',False):
+                proof=getattr(daily,'ocr_payment',None)
+                daily.ocr_payment=None
+                if (not proof or proof[0]!=action or type(proof[1]) is not int or not 1<=proof[1]<=999999999
+                        or not 0<=time.monotonic()-proof[2]<3):
+                    raise SafetyStop('랭킹 구매 금액 판독 미확인 · 구매하지 않습니다.')
+                amount=proof[1]
+            else:
+                price = config.get(currency+'_price')
+                if not price or not found(price) or getattr(daily,'price_frames',{}).get(price,0)<3:
+                    raise SafetyStop('랭킹 '+currency+' 구매 금액 미확인 · 금액까지 포함한 확인 이미지를 등록하세요.')
+        daily.reserve(currency,amount)
     if action and not daily.allowed('free'):
         raise SafetyStop('랭킹 날짜/시간 변경 · 새 결제나 경기 시작 보류')
     return action
