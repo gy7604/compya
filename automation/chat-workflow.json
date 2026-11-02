@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "appId": "compya",
+  "repository": "gy7604/compya",
+  "source": {
+    "branch": "codex/recognition-stability-20261101",
+    "baselineSha": "8f482e98975d5f85c7e38f59f2844b79b4647fdc",
+    "verifiedOn": "2026-11-03"
+  },
+  "hosting": "기존 GitHub Releases / 앱 내 업데이트",
+  "checks": [
+    "python -B -m unittest discover -s tests"
+  ],
+  "blockers": [
+    "PUBLICATION_REQUIRES_PER_VERSION_APPROVAL",
+    "PC_ADAPTER_NOT_CONNECTED"
+  ],
+  "protected": [
+    "기존 공개 Releases/사용자 설정/게임 상태"
+  ],
+  "publication": "PER_VERSION_OWNER_APPROVAL",
+  "pc": "OWNER_SELECTED_ONLY",
+  "activation": "GUIDANCE_ONLY"
+}
