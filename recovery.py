@@ -60,6 +60,7 @@ class RecoveryMachine:
         self.last_launch=float('-inf');self.missing=0;self.index=0;self.pending=None;self.pending_type=None;self.suspended=None
         self.counts={};self.since={};self.absent=0;self.next_allowed=float('-inf');self.events=[]
         self.route_since=None
+        self.popup_taps=0
 
     def check_timeout(self,now):
         if not self.active:
@@ -106,6 +107,7 @@ class RecoveryMachine:
         self.active=self.running=self.hold=True
         self.restored=False;self.route_since=now;self.missing=0;self.index=0
         self.pending=self.pending_type=self.suspended=None
+        self.popup_taps=0
         self.counts={};self.since={};self.absent=0;self.next_allowed=float('-inf')
         self.events.append(f'LDPlayer 복구 시도 · {self.launches}/{self.config["max_launches"]}회')
         return True
@@ -133,16 +135,22 @@ class RecoveryMachine:
         if self.pending and self.pending_type=='popup':
             self.absent=0 if found.get(self.pending,False) else self.absent+1
             if self.absent>=3:
-                self.pending=None;self.absent=0
+                self.pending=None;self.absent=0;self.popup_taps=0
                 if self.suspended:
                     self.pending,self.pending_type=self.suspended;self.suspended=None
+            elif self.ready(self.pending,now) and now>=self.next_allowed:
+                if self.popup_taps>=5:raise SafetyStop('접속 광고 닫기 5회 후에도 광고 표시 · 자동 복구 필요')
+                self.popup_taps+=1;self.next_allowed=now+8
+                self.events.append(f'연속 접속 광고 닫기 · {self.popup_taps}/5회 · {self.records[self.pending]["name"]}')
+                return self.pending
             return None
         if popups:
             key=popups[0]
             if self.ready(key,now) and now>=self.next_allowed:
                 if self.pending and self.pending_type=='step':self.suspended=(self.pending,self.pending_type)
                 self.pending=key;self.pending_type='popup';self.absent=0
-                self.next_allowed=now+max(2,float(self.records[key]['cooldown']))
+                self.popup_taps=1
+                self.next_allowed=now+max(8,float(self.records[key]['cooldown']))
                 self.events.append(f'접속 광고 닫기 · {self.records[key]["name"]}')
                 return key
             return None

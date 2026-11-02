@@ -17,6 +17,20 @@ def fixture():
 def visible(*keys):return dict.fromkeys(keys,True)
 
 class RecoveryTests(unittest.TestCase):
+    def test_same_close_template_on_successive_ads_retries_boundedly(self):
+        records,cfg=fixture();m=RecoveryMachine(cfg,records)
+        for t in range(3):action=m.observe(visible('ad'),t)
+        self.assertEqual(action,'ad')
+        self.assertIsNone(m.observe(visible('ad'),3))
+        self.assertEqual(m.observe(visible('ad'),10),'ad')
+        self.assertEqual(m.observe(visible('ad'),18),'ad')
+        self.assertEqual(m.observe(visible('ad'),26),'ad')
+        self.assertEqual(m.observe(visible('ad'),34),'ad')
+        with self.assertRaises(SafetyStop):m.observe(visible('ad'),42)
+        for t in (43,44,45):m.observe({},t)
+        self.assertIsNone(m.pending)
+        self.assertEqual(m.popup_taps,0)
+
     def test_league_ignores_incomplete_enabled_ranking_recovery(self):
         saved = dict(default_recovery(), enabled=True)
         effective = recovery_for_mode(saved, False)
@@ -75,10 +89,12 @@ class RecoveryTests(unittest.TestCase):
             if action:self.assertEqual(action,'menu')
         self.frames(m,visible('goal'),24)
         self.assertTrue(m.restored);self.assertFalse(m.active)
-    def test_ad_alone_preempts_goal_and_never_repeats_close_while_visible(self):
+    def test_ad_alone_preempts_goal_and_cannot_repeat_before_retry_interval(self):
         m=self.machine()
         self.assertEqual(self.frames(m,visible('ad','goal'),0),[None,None,'ad'])
-        for t in range(3,12):self.assertIsNone(m.observe(visible('ad','goal'),t));self.assertFalse(m.restored)
+        for t in range(3,10):self.assertIsNone(m.observe(visible('ad','goal'),t));self.assertFalse(m.restored)
+        self.assertEqual(m.observe(visible('ad','goal'),10),'ad')
+        self.assertFalse(m.restored)
         self.frames(m,visible('goal'),12);m.observe(visible('goal'),15)
         self.assertTrue(m.restored)
     def test_live_game_does_not_trigger_recovery_or_launch(self):
