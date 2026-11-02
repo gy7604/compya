@@ -9,6 +9,25 @@ from test_recovery import fixture
 
 
 class PlayerRecoveryTests(unittest.TestCase):
+    def test_transition_timeout_uses_player_recovery_instead_of_terminal_stop(self):
+        records,cfg=fixture();cfg.update(target='league',stall_enabled=True,restart_player=True)
+        app=App.__new__(App);app.stop=threading.Event();app.stop.wait=Mock(return_value=False)
+        app.emit=Mock();app.registry=Mock();app.registry.resolve.side_effect=lambda x:x
+        adb=Mock();adb.app_running.return_value=True;adb.screenshot.return_value=b'frame'
+        adb.launch_app.side_effect=lambda package:app.stop.set()
+        player=Mock();player.index=0;player.restart.return_value=True
+        def matcher(*args,**kwargs):
+            value=Mock();value.find.return_value=(False,(100,200),.2,(720,1280));return value
+        transition=Mock();transition.observe.side_effect=SafetyStop('화면 전환 확인 시간 초과')
+        watchdog=Mock();watchdog.observe.return_value=False
+        with patch('app.ADB',return_value=adb),patch('player_restart.PlayerRestart',return_value=player), \
+             patch('app.StallWatch',return_value=watchdog),patch('app.TransitionWatch',return_value=transition), \
+             patch('vision.Matcher',side_effect=matcher),patch('app.time.monotonic',side_effect=range(0,10000,40)):
+            app.run(dict(buttons=records,recovery=cfg,adb='adb',serial='emulator-5554',dry=False))
+        player.restart.assert_called_once()
+        self.assertFalse(any('안전 중지' in c.args[0] for c in app.emit.call_args_list))
+        adb.tap.assert_not_called()
+
     def test_restart_resets_stale_route_without_erasing_shared_budget(self):
         records,cfg=fixture();cfg['max_launches']=2
         m=RecoveryMachine(cfg,records)

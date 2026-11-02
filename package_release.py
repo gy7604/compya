@@ -12,7 +12,7 @@ def build_archive(root, output):
             permitted = (len(rel.parts) == 1 and rel.name in (
                 'V26Macro.exe', 'UpdateHelper.exe', 'README.md', 'TEST_RESULTS.md')) or (
                 rel.parts[0] == '_internal') or (
-                len(rel.parts) == 2 and rel.parts[0] == 'assets' and rel.name in ('catcher.png', 'app.ico'))
+                len(rel.parts) == 2 and rel.parts[0] == 'assets' and rel.name in ('catcher.png', 'app.ico', 'coach_advice.png'))
             if path.is_file() and permitted:
                 z.write(path, Path('V26Macro')/rel)
     with zipfile.ZipFile(output) as z:

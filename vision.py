@@ -40,3 +40,17 @@ class Matcher:
             color_ok=error<=self.color_tolerance
             score=min(score,1-error/255)
         return bool(contrast_ok and color_ok and score >= self.threshold), (x+loc[0]+tw//2, y+loc[1]+th//2), float(score), (w, h)
+
+
+class PriceMatcher(Matcher):
+    """Reject even a single changed price digit; broad button correlation is insufficient."""
+    def find(self, png):
+        found,center,score,size=super().find(png)
+        if found:
+            screen=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_GRAYSCALE)
+            h,w=self.template.shape
+            x,y=center[0]-w//2,center[1]-h//2
+            patch=screen[y:y+h,x:x+w]
+            changed=np.abs(patch.astype(np.int16)-self.template.astype(np.int16))>32
+            found=bool(np.mean(changed)<=.001)
+        return found,center,score,size

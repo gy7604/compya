@@ -23,6 +23,8 @@ from recovery import RecoveryStore,RecoveryMachine,default_recovery,validate_rec
 from ranking import RankingStore, RankingMachine, default_ranking, validate_ranking
 from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
 from progress import ProgressStore, ProgressClicker, default_progress, validate_progress
+from ranking_schedule import ScheduleStore, ScheduledRunner
+from interruptions import CoachAdvice
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -41,6 +43,8 @@ class App:
         self.update_worker = None
         self.next_release = None
         self.fields = {}
+        self.schedule_store=ScheduleStore(ROOT)
+        self.schedule=self.schedule_store.load()
         form = ttk.Frame(root, padding=12)
         form.pack(fill='x')
         defaults = [('adb', 'ADB 실행 파일', 'adb'), ('serial', '장치 주소 / serial', '127.0.0.1:5555'),
@@ -96,6 +100,7 @@ class App:
         ttk.Checkbutton(form, text='게임에서 타격 OFF · 투구 ON · 풀 플레이를 직접 설정했습니다.', variable=self.confirm).grid(row=6, column=0, columnspan=3, sticky='w')
         ttk.Label(form,text='랭킹: 연속 경기 결과 화면을 1회로 집계 · 시작마다 0회로 초기화').grid(row=7,column=0,columnspan=2,sticky='w')
         ttk.Button(form,text='랭킹 챌린지 설정',command=self.manage_ranking).grid(row=7,column=2,padx=8)
+        ttk.Button(form,text='평일/주말 랭킹 일정',command=self.manage_schedule).grid(row=8,column=1,sticky='w')
         for row,key,label,preferred in [(9,'league_start','리그 집계 · 경기 중 이미지','포수리드'),(10,'league_result','리그 집계 · 경기 결과 이미지','경기결과 다음')]:
             initial=saved.get(key,next((r['name'] for r in self.records if r['name']==preferred),'미사용'))
             self.fields[key]=tk.StringVar(value=initial)
@@ -330,7 +335,12 @@ class App:
             validate_recovery(config['recovery'],self.records)
             if self.recovery['enabled'] and not config['recovery']['enabled']:
                 self.emit('현재 모드와 복귀 대상이 달라 자동 재접속은 사용하지 않습니다. 일반 진행은 계속합니다.')
-            validate_ranking(self.ranking,self.records)
+            config['schedule']=dict(self.schedule)
+            config['coach_advice']=True
+            if self.schedule['enabled']:
+                from ranking_schedule import validate as validate_schedule
+                validate_schedule(self.schedule,self.records,self.ranking,self.recovery)
+            else:validate_ranking(self.ranking,self.records)
             validate_notifications(self.notifications,self.records)
             validate_rules(self.rules, self.records)
             validate_progress(self.progress,self.records)
@@ -356,12 +366,29 @@ class App:
         self.worker.start()
 
     def run(self, cfg):
+        if not cfg.get('schedule',{}).get('enabled'):
+            return self.run_session(cfg)
+        try:
+            ScheduledRunner(self,cfg,ROOT).run()
+        except Exception as error:
+            self.emit(f'일정 실행 중지 · {error}')
+        finally:
+            self.stop.set()
+            self.emit('일정 실행 종료')
+
+    def manage_schedule(self):
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo('실행 중','중지 후 일정 설정을 변경하세요.');return
+        from ranking_schedule_ui import ScheduleManager
+        ScheduleManager(self)
+
+    def run_session(self, cfg):
         png, results, records, machine = None, {}, {}, None
         previous_png=None
         last_click=None
         recovery=ranking=None
         try:
-            from vision import Matcher
+            from vision import Matcher,PriceMatcher
             from registry import validate
             validate(cfg['buttons'])
             rules = cfg.get('rules', [])
@@ -370,8 +397,12 @@ class App:
             notifier=NotificationDetector(notification_config,cfg['buttons'])
             ranking_config=cfg.get('ranking',default_ranking())
             ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
+            if cfg.get('_daily'):ranking.completed=cfg['_daily'].entry['completed']
             recovery_config=recovery_for_mode(cfg.get('recovery',default_recovery()),ranking_config['enabled'])
             recovery=RecoveryMachine(recovery_config,cfg['buttons'])
+            if cfg.get('_activate_route'):recovery.active=True
+            coach=CoachAdvice()
+            coach_matcher=Matcher(ROOT/'assets'/'coach_advice.png',.94,[265,120,450,215]) if cfg.get('coach_advice') and (ROOT/'assets'/'coach_advice.png').exists() else None
             watchdog=StallWatch(recovery_config.get('stall_seconds',180))
             transition_watch=TransitionWatch()
             watch_enabled=recovery_config['enabled'] and recovery_config.get('stall_enabled',False)
@@ -391,6 +422,8 @@ class App:
                 referenced.update(notification_config['watch'])
             if ranking_config['enabled']:
                 referenced.update(ranking_config[key] for key in ('lobby','refresh','points','paid','series','disabled','proceed','result','confirm','reward','reward_confirm','refresh_dialog','points_confirm','star_confirm') if ranking_config.get(key))
+                if cfg.get('_daily'):
+                    referenced.update(cfg['schedule'][key] for key in ('points_price','star_price','exhausted') if cfg['schedule'].get(key))
             if recovery_config['enabled']:
                 referenced.update([recovery_config['goal']]+recovery_config['steps']+recovery_config['popups'])
             records = {r['id']: r for r in cfg['buttons'] if r['enabled'] and
@@ -400,6 +433,12 @@ class App:
             color_keys={ranking_config[key] for key in ('series','disabled','refresh','points','paid','reward','points_confirm','star_confirm') if ranking_config.get(key)} if ranking_config['enabled'] else set()
             matchers = {key: Matcher(self.registry.resolve(r['template']), r['threshold'], r['roi'], **({'color_tolerance':25} if key in color_keys else {}))
                         for key, r in records.items()}
+            if cfg.get('_daily'):
+                for field in ('points_price','star_price'):
+                    key=cfg['schedule'].get(field)
+                    if key:
+                        r=records[key]
+                        matchers[key]=PriceMatcher(self.registry.resolve(r['template']),max(.94,r['threshold']),r['roi'])
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
             adb = ADB(cfg['adb'], cfg['serial'])
             player_restart=None
@@ -445,6 +484,25 @@ class App:
                     return True
                 return False
 
+            def recover_transition(error):
+                self.emit(f'화면 진행 복구 요청 · {error}')
+                if png is not None:
+                    try:
+                        from diagnostics import write_stop_snapshot
+                        write_stop_snapshot(ROOT,png,records,results,machine.pending,cfg['dry'],
+                                            context=dict(error=str(error),recovery_launches=recovery.launches,
+                                                         workflow=machine.status),previous_png=previous_png)
+                        self.emit('전환 실패 화면 저장 · logs/last_stop.png · 자동 복구 계속')
+                    except Exception as diagnostic_error:
+                        self.emit(f'전환 진단 저장 실패 · {diagnostic_error}')
+                if cfg['dry'] or not watch_enabled:raise error
+                if player_restart:
+                    reboot_player('화면 전환 미확인')
+                elif recovery.restart_stalled(time.monotonic()):
+                    adb.stop_app(recovery_config['package'])
+                    if not self.stop.is_set():adb.launch_app(recovery_config['package'])
+                watchdog.reset()
+
             while not self.stop.is_set():
                 try:
                     if need_connect:
@@ -465,7 +523,9 @@ class App:
                             self.stop.wait(.2);continue
                     next_png = adb.screenshot()
                     adb_failures=0
-                except SafetyStop:
+                except SafetyStop as error:
+                    if watch_enabled and player_restart and not cfg['dry']:
+                        reboot_player(str(error));self.stop.wait(1);continue
                     raise
                 except RuntimeError as connection_error:
                     if not player_restart:raise
@@ -526,7 +586,24 @@ class App:
                 if self.stop.is_set():
                     break
                 now = time.monotonic()
-                recovery_action=recovery.observe({key:result[0] for key,result in results.items()},now)
+                if coach_matcher:
+                    present,_,_,coach_size=coach_matcher.find(png)
+                    if coach_size!=(720,1280):present=False
+                    try:cancel_advice=coach.observe(present,now)
+                    except SafetyStop as error:
+                        recover_transition(error);self.stop.wait(1);continue
+                    if cancel_advice:
+                        if not cfg['dry'] and not self.stop.is_set():adb.tap((454,292))
+                        self.emit('코치의 조언 · 투수 교체 안내 취소 · 경기 계속')
+                    if coach.resumed:
+                        machine=WorkflowMachine(records,rules,now,detection_frames=frames)
+                        transition_watch=TransitionWatch()
+                        self.emit('코치 안내 닫힘 확인 · 경기 버튼 다시 인식')
+                    if coach.hold:
+                        watchdog.reset();self.stop.wait(interval);continue
+                try:recovery_action=recovery.observe({key:result[0] for key,result in results.items()},now)
+                except SafetyStop as error:
+                    recover_transition(error);self.stop.wait(1);continue
                 while recovery.events:self.emit(recovery.events.pop(0))
                 if recovery.restored:
                     transition_watch=TransitionWatch()
@@ -556,6 +633,10 @@ class App:
                 if count_enabled and counter.observe({key:result[0] for key,result in results.items()}):
                     self.events.put(('league_count',counter.completed,cfg['dry'],True))
                     self.emit(f'{"모의 집계" if cfg["dry"] else "리그 경기 완료"} · 이번 실행 {counter.completed}경기')
+                if (count_enabled and counter.result_frames>=counter.frames
+                        and cfg.get('_handoff') and cfg['_handoff']()):
+                    cfg['_yielded']=True
+                    self.emit('리그 결과 확인 · 다음 경기 시작 전 랭킹으로 전환');break
                 hits=notifier.observe({key:result[0] for key,result in results.items()})
                 if hits:
                     names=', '.join(records[key]['name'] for key in hits)
@@ -570,11 +651,22 @@ class App:
                     self.stop.wait(interval)
                     continue
                 ranking_action=ranking.observe({key:result[0] for key,result in results.items()},now)
+                if cfg.get('_daily'):
+                    from ranking_schedule import guard_action
+                    daily=cfg['_daily']
+                    daily.price_frames=getattr(daily,'price_frames',{})
+                    for key in ('points_price','star_price'):
+                        price=cfg['schedule'].get(key)
+                        if price:daily.price_frames[price]=daily.price_frames.get(price,0)+1 if results.get(price,(False,))[0] else 0
+                    ranking_action=guard_action(daily,ranking,ranking_action,results,cfg['schedule'])
                 while ranking.events:self.emit(ranking.events.pop(0))
                 if ranking.finished:
+                    if cfg.get('_daily'):cfg['_ranking_done']='오늘 허용된 도전 횟수 소진'
                     self.emit('랭킹 목표 횟수 완료 · 다음 연속 경기 시작 전에 중지');break
                 if ranking.hold:
-                    transition_watch.observe(None,now)
+                    try:transition_watch.observe(('랭킹',ranking.phase),now,300)
+                    except SafetyStop as error:
+                        recover_transition(error);self.stop.wait(1);continue
                     if ranking_action:
                         if self.stop.is_set():break
                         _,matched_point,score,_=results[ranking_action]
@@ -590,19 +682,23 @@ class App:
                         self.emit(f'랭킹 대기 · {labels[ranking.phase]} · 완료 {ranking.completed}/{ranking.target}회 · {scores}')
                         heartbeat=now
                     self.stop.wait(interval);continue
-                action = machine.observe({n: r[0] for n, r in results.items()}, now)
+                try:action = machine.observe({n: r[0] for n, r in results.items()}, now)
+                except SafetyStop as error:
+                    recover_transition(error);self.stop.wait(1);continue
                 transition_state=None
                 transition_limit=180
                 if machine.active:
-                    transition_state=('규칙',machine.active['id'],machine.index,machine.phase)
+                    transition_state=('규칙',machine.active.get('name',machine.active['id']),machine.index+1,machine.phase)
                     record=records[machine.active['steps'][machine.index]['button']]
                     transition_limit=max(180,float(record.get('click_delay',0))+float(record.get('cooldown',2))+180)
                 elif machine.normal.pending:
                     key=machine.normal.pending
-                    transition_state=('클릭 확인',key)
+                    transition_state=('클릭 확인',records[key]['name'])
                     record=records[key]
                     transition_limit=max(180,float(record.get('retry_limit',0))*max(float(record.get('retry_interval',8)),float(record.get('click_delay',0)),float(record.get('cooldown',2)))+180)
-                transition_watch.observe(transition_state,now,transition_limit)
+                try:transition_watch.observe(transition_state,now,transition_limit)
+                except SafetyStop as error:
+                    recover_transition(error);self.stop.wait(1);continue
                 while machine.events:
                     self.emit(machine.events.pop(0))
                 if machine.finished:
@@ -642,6 +738,7 @@ class App:
                     previous_state, heartbeat = state, now
                 self.stop.wait(interval)
         except Exception as e:
+            cfg['_failed']=True
             self.emit(f'안전 중지 · {e}')
             if (recovery is not None and recovery.active and recovery.config['enabled']
                     and recovery.launches>=recovery.config['max_launches']
@@ -679,7 +776,7 @@ class App:
                 except Exception as diagnostic_error:
                     self.emit(f'중지 화면 저장 실패 · {diagnostic_error}')
         finally:
-            self.stop.set()
+            if not cfg.get('_scheduled'):self.stop.set()
             self.emit('실행 종료')
 
     def render_log(self):
@@ -771,6 +868,7 @@ if __name__ == '__main__':
         app.manage_notifications()
         app.manage_ranking()
         app.manage_recovery()
+        app.manage_schedule()
         root.update()
         (ROOT/'logs'/'selftest.json').write_text(json.dumps({
             'frozen': bool(getattr(sys, 'frozen', False)), 'template_score': score,

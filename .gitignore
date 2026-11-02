@@ -22,3 +22,6 @@ notifications.json
 ranking.json
 
 recovery.json
+ranking_schedule.json
+ranking_daily*.json
+ranking_schedule.lock
