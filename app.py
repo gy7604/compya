@@ -17,6 +17,7 @@ from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
 from league_count import LeagueCounter
 from league_season import SeasonProgress,RoundReader
+from league_rewards import LeagueRewards
 from collections import deque
 from log_view import concise_status,important_message
 from stall import StallWatch,TransitionWatch
@@ -422,6 +423,7 @@ class App:
             count_ids={r['name']:r['id'] for r in cfg['buttons'] if r['enabled'] and r['template']}
             counter=LeagueCounter(count_ids.get(cfg.get('league_start',''),''),count_ids.get(cfg.get('league_result',''),''),frames=speed_settings(cfg.get('speed',DEFAULT_MODE))[0])
             count_enabled=not ranking_config['enabled'] and bool(counter.start and counter.result)
+            rewards=LeagueRewards(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             season=SeasonProgress(ROOT,dry=cfg['dry'])
             round_reader=RoundReader(ROOT) if count_enabled else None
             def season_event():
@@ -560,6 +562,13 @@ class App:
                             adb_failures=0;need_connect=False;last_process_poll=float('-inf')
                     self.stop.wait(2);continue
                 previous_png,png=png,next_png
+                reward_point=rewards.observe(png,time.monotonic(),self.stop) if rewards.enabled else None
+                while rewards.events:self.emit(rewards.events.pop(0))
+                if rewards.hold:
+                    watchdog.reset();transition_watch=TransitionWatch()
+                    if reward_point and not cfg['dry'] and not self.stop.is_set():adb.tap(reward_point)
+                    if reward_point:self.emit(f'{"모의 " if cfg["dry"] else ""}시즌 보상 탭 · 좌표={reward_point}')
+                    self.stop.wait(.2);continue
                 if watch_enabled:
                     # A cold emulator/game launch can legitimately stay black
                     # longer than the user's in-game freeze threshold.
