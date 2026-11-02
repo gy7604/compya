@@ -177,6 +177,38 @@ class DailyRun:
         self.save()
 
 
+def league_session_visible(root,cfg,stop):
+    """Read-only startup probe: do not interrupt a league game when ranking is due."""
+    if stop.is_set():return False
+    from adb import ADB
+    from vision import Matcher
+    records={r['id']:r for r in cfg['buttons'] if r['enabled']}
+    by_name={r['name']:r['id'] for r in records.values()}
+    try:
+        checks=[]
+        hud=Path(root)/'assets/league_play_hud.png'
+        if hud.is_file():checks.append((Matcher(hud,.94,[600,45,120,90]),(720,1280)))
+        for key in (by_name.get(cfg.get('league_start')),by_name.get(cfg.get('league_result')),cfg['recovery'].get('goal')):
+            r=records.get(key)
+            if r and (Path(root)/r['template']).is_file():
+                checks.append((Matcher(Path(root)/r['template'],r['threshold'],r.get('roi')),tuple(r.get('size') or (720,1280))))
+        if not checks:return False
+        r=records.get(cfg['ranking'].get('lobby'));veto=None
+        if r and (Path(root)/r['template']).is_file():veto=Matcher(Path(root)/r['template'],r['threshold'],r.get('roi'))
+        adb=ADB(cfg['adb'],cfg['serial']);adb.connect()
+        for _ in range(2):
+            if stop.is_set():return False
+            png=adb.screenshot()
+            if veto and veto.find(png)[0]:return False
+            matches=[(matcher.find(png),size) for matcher,size in checks]
+            if not any(result[0] and result[3]==size for result,size in matches):return False
+            if stop.wait(.1):return False
+        return True
+    except Exception:
+        # Missing/unknown screens are left to the normal bounded recovery path.
+        return False
+
+
 class ScheduledRunner:
     """Supervise normal league sessions; hand off only at a verified league result."""
     def __init__(self, app, cfg, root):
@@ -192,9 +224,14 @@ class ScheduledRunner:
         from ranking import validate_ranking
         validate(self.cfg['schedule'], self.cfg['buttons'], self.cfg['ranking'], self.cfg['recovery'])
         league = copy.deepcopy(self.cfg['recovery'])
+        first_session=True
         while not self.app.stop.is_set():
             cfg = copy.deepcopy(self.cfg)
             ranking_mode = self.daily.due()
+            if first_session and ranking_mode and not cfg['dry'] and league_session_visible(self.root,cfg,self.app.stop):
+                ranking_mode=False
+                self.app.emit('진행 중인 리그 확인 · 현재 경기 결과까지 유지한 뒤 랭킹으로 전환')
+            if self.app.stop.is_set():break
             cfg['_scheduled'] = True
             cfg['recovery'] = copy.deepcopy(league)
             cfg['recovery']['enabled'] = True
@@ -217,13 +254,16 @@ class ScheduledRunner:
             else:
                 cfg['recovery']['target'] = 'league'
                 self.app.emit('리그 진행 · 다음 랭킹 시간까지 대기 (평일 13시 / 주말 20시, 한국시간)')
-            if not cfg['dry']:
+            if not cfg['dry'] and not first_session:
                 adb = ADB(cfg['adb'], cfg['serial'])
                 adb.connect()
                 adb.stop_app(cfg['recovery']['package'])
                 if self.app.stop.is_set():break
                 adb.launch_app(cfg['recovery']['package'])
                 cfg['_activate_route'] = True
+            elif first_session:
+                self.app.emit('시작 · 현재 게임 화면 이어받기 · 정상 게임은 재실행하지 않습니다.')
+            first_session=False
             self.app.run_session(cfg)
             if cfg.get('_failed') or self.app.stop.is_set():break
             if ranking_mode:

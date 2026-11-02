@@ -84,7 +84,7 @@ def safe_member(name):
     # Configuration and user images never come from an update package.
     return (len(rel) == 1 and rel[0] in ('V26Macro.exe', 'UpdateHelper.exe', 'PriceOCR.exe', 'README.md', 'TEST_RESULTS.md')) or (
         rel[0] == '_internal' and len(rel) > 1) or (
-        len(rel) == 2 and rel[0] == 'assets' and rel[1] in ('catcher.png', 'app.ico','coach_advice.png','league_next_match.png','league_round_label.png'))
+        len(rel) == 2 and rel[0] == 'assets' and rel[1] in ('catcher.png', 'app.ico','coach_advice.png','league_next_match.png','league_round_label.png','league_play_hud.png'))
 
 
 def extract_package(archive, destination):

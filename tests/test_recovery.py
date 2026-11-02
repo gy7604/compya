@@ -17,6 +17,21 @@ def fixture():
 def visible(*keys):return dict.fromkeys(keys,True)
 
 class RecoveryTests(unittest.TestCase):
+    def test_existing_midroute_menu_resumes_without_process_restart(self):
+        m=self.machine()
+        self.assertEqual(self.frames(m,visible('menu'),0),[None,None,'menu'])
+        self.assertTrue(m.active);self.assertEqual(m.launches,0)
+        self.assertFalse(m.poll(True,3));self.assertEqual(m.launches,0)
+        self.frames(m,visible('goal'),4)
+        self.assertFalse(m.active);self.assertTrue(m.restored)
+
+    def test_normal_goal_or_result_does_not_activate_reconnect(self):
+        m=self.machine()
+        for t in range(3):
+            self.assertIsNone(m.observe(visible('goal'),t));self.assertFalse(m.active);self.assertFalse(m.hold)
+        for t in range(3,6):
+            self.assertIsNone(m.observe(visible('result'),t));self.assertFalse(m.active);self.assertFalse(m.hold)
+
     def test_same_close_template_on_successive_ads_retries_boundedly(self):
         records,cfg=fixture();m=RecoveryMachine(cfg,records)
         for t in range(3):action=m.observe(visible('ad'),t)

@@ -126,7 +126,8 @@ class RecoveryMachine:
                 self.counts[key]=self.counts.get(key,0)+1
             else:self.counts[key]=0;self.since.pop(key,None)
         popups=[key for key in self.config['popups'] if found.get(key,False)]
-        if popups or (found.get(self.config['steps'][0],False) and not found.get(self.config['goal'],False)):
+        route_visible=any(found.get(key,False) for key in self.config['steps'])
+        if popups or (route_visible and not found.get(self.config['goal'],False)):
             if not self.active:self.index=0;self.events.append('접속 화면 또는 광고 감지 · 모드 복귀 시작')
             self.active=True
             self.check_timeout(now)

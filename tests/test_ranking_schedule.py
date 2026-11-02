@@ -146,7 +146,51 @@ class ScheduleTests(unittest.TestCase):
             self.assertFalse(sessions[1]['ranking']['allow_star'])
             self.assertEqual(sessions[2]['recovery']['target'],'league')
             self.assertFalse(runner.daily.due())
-            self.assertEqual(adb.return_value.stop_app.call_count,3)
+            self.assertNotIn('_activate_route',sessions[0])
+            self.assertEqual(adb.return_value.stop_app.call_count,2)
+
+    def test_first_start_does_not_stop_or_launch_a_healthy_existing_game(self):
+        from test_recovery import fixture as recovery_fixture
+        records,ranking=fixture();other,recovery=recovery_fixture();records+=other;recovery['target']='league'
+        cfg=dict(buttons=records,ranking=ranking,recovery=recovery,dry=False,adb='adb',serial='device',schedule=dict(defaults(),enabled=True,ranking_steps=['title','menu']))
+        app=Mock();app.stop=threading.Event();app.run_session.side_effect=lambda config:app.stop.set()
+        with tempfile.TemporaryDirectory() as root,patch('adb.ADB') as adb:
+            runner=ScheduledRunner(app,cfg,root);runner.daily.clock=lambda:datetime(2026,11,2,12,tzinfo=KST);runner.run()
+            adb.assert_not_called()
+            self.assertNotIn('_activate_route',app.run_session.call_args.args[0])
+
+    def test_due_start_preserves_current_league_until_result_handoff(self):
+        from test_recovery import fixture as recovery_fixture
+        records,ranking=fixture();other,recovery=recovery_fixture();records+=other;recovery['target']='league'
+        cfg=dict(buttons=records,ranking=ranking,recovery=recovery,dry=False,adb='adb',serial='device',schedule=dict(defaults(),enabled=True,ranking_steps=['title','menu']))
+        app=Mock();app.stop=threading.Event();sessions=[]
+        def session(config):
+            sessions.append(config)
+            if len(sessions)==1:
+                self.assertFalse(config['ranking']['enabled']);self.assertTrue(config['_handoff']());config['_yielded']=True
+            else:app.stop.set()
+        app.run_session.side_effect=session
+        with tempfile.TemporaryDirectory() as root,patch('adb.ADB') as adb,patch('ranking_schedule.league_session_visible',return_value=True):
+            runner=ScheduledRunner(app,cfg,root);runner.daily.clock=lambda:datetime(2026,11,2,13,tzinfo=KST);runner.run()
+            self.assertEqual([c['ranking']['enabled'] for c in sessions],[False,True])
+            self.assertEqual(adb.return_value.stop_app.call_count,1)
+
+    def test_readonly_probe_requires_two_league_hud_frames(self):
+        import cv2,numpy as np,shutil
+        from ranking_schedule import league_session_visible
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'assets').mkdir()
+            source=Path(__file__).resolve().parents[1]/'assets/league_play_hud.png'
+            shutil.copy2(source,root/'assets/league_play_hud.png')
+            image=cv2.imread(str(source));frame=np.zeros((1280,720,3),np.uint8);frame[60:120,615:719]=image
+            png=cv2.imencode('.png',frame)[1].tobytes();blank=cv2.imencode('.png',np.zeros_like(frame))[1].tobytes()
+            cfg=dict(buttons=[],ranking={},recovery={},adb='adb',serial='device')
+            with patch('adb.ADB') as adb:
+                adb.return_value.screenshot.side_effect=[png,png]
+                self.assertTrue(league_session_visible(root,cfg,threading.Event()))
+                adb.return_value.stop_app.assert_not_called();adb.return_value.launch_app.assert_not_called()
+                adb.return_value.screenshot.side_effect=[png,blank]
+                self.assertFalse(league_session_visible(root,cfg,threading.Event()))
 
     def test_korean_time_not_host_time(self):
         self.assertEqual(policy(datetime(2026,11,2,4,tzinfo=timezone.utc)),('2026-11-02',True,False))

@@ -56,7 +56,7 @@ def replace_runtime(root, package):
             installed.append(name)
         assets = root/'assets'
         assets.mkdir(exist_ok=True)
-        for name in ('catcher.png', 'app.ico','coach_advice.png','league_next_match.png','league_round_label.png'):
+        for name in ('catcher.png', 'app.ico','coach_advice.png','league_next_match.png','league_round_label.png','league_play_hud.png'):
             if not (assets/name).exists() and (package/'assets'/name).exists():
                 shutil.copy2(package/'assets'/name, assets/name)
     except Exception:
