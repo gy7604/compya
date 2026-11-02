@@ -129,7 +129,7 @@ class DailyRun:
         day, due, weekend = policy(self.clock())
         return day == self.day and due and (currency != 'star' or weekend)
 
-    def reserve(self, currency, amount=None):
+    def reserve(self, currency, amount=None, remaining=None,total=None):
         # Persist BEFORE sending a tap. An unknown outcome must never be paid again.
         if not self.allowed(currency):raise SafetyStop('현재 한국시간의 재화 사용 조건을 벗어났습니다.')
         if self.entry['pending']:
@@ -138,12 +138,17 @@ class DailyRun:
             raise SafetyStop('하루 '+currency+' 갱신 한도 도달')
         self.entry['purchases'][currency] += 1
         self.entry['pending'] = currency
+        self.entry['pending_completed']=self.entry['completed']
         if amount is not None:self.entry['last_payment']=dict(currency=currency,amount=amount)
+        if remaining is not None:
+            self.entry['paid_remaining']=remaining-1
+            self.entry['paid_total']=total
         self.save()
 
     def verified(self):
         if self.entry['pending']:
             self.entry['pending'] = None
+            self.entry.pop('pending_completed',None)
             self.save()
 
     def completed(self, count):
@@ -217,14 +222,20 @@ def guard_action(daily, machine, action, results, config):
     """Enforce time/currency at the final payment boundary, including recovery."""
     found = lambda key: bool(key and results.get(key, (False,))[0])
     r = machine.config
+    before=daily.entry['completed']
+    completed_after_purchase=machine.completed>daily.entry.get('pending_completed',before)
     daily.completed(machine.completed)
-    # A recovered process may verify an old intent only after an active list is
-    # positively observed. Absence of a dialog alone is never payment success.
+    # A stable active list or a completed later batch verifies the reserved
+    # intent. Absence of a dialog alone is never payment success.
     if (daily.entry['pending'] and not found(r['refresh_dialog']) and
-            ((machine.stable(r['lobby'], {}) and machine.stable(r['series'], {}))
+            (machine.refresh_verified or completed_after_purchase
+             or (machine.stable(r['lobby'], {}) and machine.stable(r['series'], {}))
              or (action == r['series'] and found(r['lobby'])))):
         daily.verified()
+        machine.refresh_verified=False
     if machine.phase == 'lobby' and machine.stable(r['lobby'], {}) and machine.stable(r['disabled'], {}):
+        if daily.entry.get('paid_remaining')==0 and not daily.entry['pending']:
+            machine.finished=True;machine.events.append('게임의 추가 갱신 횟수 소진 확인');return None
         if (not r.get('paid') and not any(found(r[k]) for k in ('series','points','refresh'))):
             raise SafetyStop('다음 랭킹 갱신 재화 미확인 · 별 갱신 이미지를 먼저 등록하세요.')
         exhausted = config.get('exhausted')
@@ -238,20 +249,23 @@ def guard_action(daily, machine, action, results, config):
     currency = next((kind for key, kind in [('refresh','free'),('points_confirm','points'),
                                             ('star_confirm','star')] if action and action == r[key]), None)
     if currency:
-        amount=None
+        amount=remaining=total=None
         if currency != 'free':
             if config.get('ocr_prices',False):
                 proof=getattr(daily,'ocr_payment',None)
                 daily.ocr_payment=None
-                if (not proof or proof[0]!=action or type(proof[1]) is not int or not 1<=proof[1]<=999999999
+                if (not proof or len(proof)!=5 or proof[0]!=action or type(proof[1]) is not int or not 1<=proof[1]<=999999999
                         or not 0<=time.monotonic()-proof[2]<3):
                     raise SafetyStop('랭킹 구매 금액 판독 미확인 · 구매하지 않습니다.')
                 amount=proof[1]
+                remaining,total=proof[3:]
+                if type(remaining) is not int or type(total) is not int or not 1<=remaining<=total<=999:
+                    raise SafetyStop('랭킹 구매 가능 횟수 판독 미확인 · 구매하지 않습니다.')
             else:
                 price = config.get(currency+'_price')
                 if not price or not found(price) or getattr(daily,'price_frames',{}).get(price,0)<3:
                     raise SafetyStop('랭킹 '+currency+' 구매 금액 미확인 · 금액까지 포함한 확인 이미지를 등록하세요.')
-        daily.reserve(currency,amount)
+        daily.reserve(currency,amount,remaining,total)
     if action and not daily.allowed('free'):
         raise SafetyStop('랭킹 날짜/시간 변경 · 새 결제나 경기 시작 보류')
     return action

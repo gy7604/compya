@@ -13,6 +13,59 @@ from test_ranking import fixture, visible
 
 
 class ScheduleTests(unittest.TestCase):
+    def test_observed_final_paid_attempt_finishes_after_result_without_guessing_count(self):
+        records,cfg=fixture();machine=RankingMachine(cfg,records,100)
+        with tempfile.TemporaryDirectory() as root:
+            daily=DailyRun(root,defaults(),lambda:datetime(2026,11,2,13,tzinfo=KST));daily.begin()
+            # Earlier attempts may have been played outside this macro. The
+            # game's observed remaining value takes precedence over our count.
+            daily.reserve('points',7000,1,12)
+            seen=visible('lobby','disabled')
+            for now in range(3):
+                action=machine.observe(seen,now)
+                guard_action(daily,machine,action,{key:(value,) for key,value in seen.items()},defaults())
+            self.assertFalse(machine.finished)
+            daily.verified()
+            guard_action(daily,machine,None,{key:(value,) for key,value in seen.items()},defaults())
+            self.assertTrue(machine.finished)
+            self.assertEqual(daily.entry['purchases']['points'],1)
+
+    def test_refresh_receipt_survives_debounce_reset_at_phase_change(self):
+        records,cfg=fixture();machine=RankingMachine(cfg,records,1);machine.phase='refresh_return'
+        with tempfile.TemporaryDirectory() as root:
+            daily=DailyRun(root,defaults(),lambda:datetime(2026,11,2,13,tzinfo=KST));daily.begin();daily.reserve('points')
+            seen=visible('lobby','series')
+            for now in range(3):
+                action=machine.observe(seen,now)
+                guard_action(daily,machine,action,{key:(value,) for key,value in seen.items()},defaults())
+            self.assertEqual(machine.phase,'series')
+            self.assertIsNone(daily.entry['pending'])
+            self.assertEqual(daily.entry['purchases']['points'],1)
+
+    def test_completed_batch_confirms_previous_purchase_after_restart(self):
+        records,cfg=fixture();machine=RankingMachine(cfg,records,1);machine.phase='result_confirm'
+        with tempfile.TemporaryDirectory() as root:
+            clock=lambda:datetime(2026,11,2,13,tzinfo=KST)
+            daily=DailyRun(root,defaults(),clock);daily.begin();daily.completed(5);daily.reserve('points')
+            resumed=DailyRun(root,defaults(),clock);resumed.begin()
+            machine.completed=5
+            guard_action(resumed,machine,None,{},defaults())
+            self.assertEqual(resumed.entry['pending'],'points')
+            machine.completed=6
+            guard_action(resumed,machine,None,{},defaults())
+            self.assertIsNone(resumed.entry['pending'])
+            self.assertEqual(resumed.entry['purchases']['points'],1)
+
+    def test_popup_absence_without_active_list_is_not_purchase_success(self):
+        records,cfg=fixture();machine=RankingMachine(cfg,records,1);machine.phase='refresh_return'
+        with tempfile.TemporaryDirectory() as root:
+            daily=DailyRun(root,defaults(),lambda:datetime(2026,11,2,13,tzinfo=KST));daily.begin();daily.reserve('points')
+            seen=visible('lobby','disabled')
+            for now in range(5):
+                guard_action(daily,machine,machine.observe(seen,now),{key:(value,) for key,value in seen.items()},defaults())
+            self.assertEqual(machine.phase,'refresh_return')
+            self.assertEqual(daily.entry['pending'],'points')
+
     def test_scheduled_all_attempts_does_not_stop_at_manual_target(self):
         records,cfg=fixture();cfg['all_attempts']=True
         machine=RankingMachine(cfg,records,1)

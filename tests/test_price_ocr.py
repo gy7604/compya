@@ -6,7 +6,7 @@ from unittest.mock import Mock,patch
 import cv2
 import numpy as np
 from engine import SafetyStop
-from price_ocr import PriceReader,parse_price,price_crop
+from price_ocr import PriceReader,parse_price,parse_payment,price_crop
 from ranking_schedule import DailyRun,defaults,guard_action,KST
 from ranking import RankingMachine
 from datetime import datetime
@@ -14,10 +14,16 @@ from test_ranking import fixture
 
 
 class PriceTests(unittest.TestCase):
+    def test_payment_count_is_positive_evidence_not_a_guessed_limit(self):
+        self.assertEqual(parse_payment('20,000 10/12'),(20000,10,12))
+        self.assertEqual(parse_payment('30 0/12'),(30,0,12))
+        for text in ('7000','7000 13/12','7000 1/0','7000 11 /12','7000 11/12 2/3'):
+            with self.assertRaises(SafetyStop):parse_payment(text)
+
     def test_strict_numeric_prices_allow_changes_but_reject_unclear_text(self):
-        for text,amount in [('3,000',3000),('7,000',7000),('10000',10000),('30',30)]:
+        for text,amount in [('3,000',3000),('7,000',7000),('20 000',20000),('10000',10000),('30',30)]:
             self.assertEqual(parse_price(text),amount)
-        for text in ('','0','-3','1 000','7,00','P 3000','3OOO','3000 7000','1,000,000,000'):
+        for text in ('','0','-3','1 00','7,00','P 3000','3OOO','3000 7000','1,000,000,000'):
             with self.assertRaises(SafetyStop):parse_price(text)
 
     def test_currency_must_be_inside_registered_button_and_resolution(self):
@@ -73,10 +79,11 @@ class PriceTests(unittest.TestCase):
             daily=DailyRun(root,settings,lambda:datetime(2026,11,2,13,tzinfo=KST));daily.begin()
             with patch('ranking_schedule.time.monotonic',return_value=100):
                 with self.assertRaises(SafetyStop):guard_action(daily,machine,'points_confirm',{},settings)
-                daily.ocr_payment=('points_confirm',7000,96)
+                daily.ocr_payment=('points_confirm',7000,96,11,12)
                 with self.assertRaises(SafetyStop):guard_action(daily,machine,'points_confirm',{},settings)
-                daily.ocr_payment=('points_confirm',7000,100)
+                daily.ocr_payment=('points_confirm',7000,100,11,12)
                 self.assertEqual(guard_action(daily,machine,'points_confirm',{},settings),'points_confirm')
                 self.assertIsNone(daily.ocr_payment)
                 self.assertEqual(daily.entry['last_payment'],dict(currency='points',amount=7000))
                 self.assertEqual(daily.entry['pending'],'points')
+                self.assertEqual(daily.entry['paid_remaining'],10)

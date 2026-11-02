@@ -63,6 +63,7 @@ class RankingMachine:
         self.target=target;self.completed=0;self.phase='lobby';self.counts={};self.absent=0
         self.next_allowed=float('-inf');self.finished=False;self.events=[];self.hold=False
         self.reward=config.get('reward','');self.reward_confirm=config.get('reward_confirm','');self.reward_absent=0;self.target_reached=False;self.initial_sync=True
+        self.refresh_verified=False
     def stable(self,key,found):
         return bool(key) and self.counts.get(key,0)>=3
     def observe(self,found,now):
@@ -104,7 +105,8 @@ class RankingMachine:
         key=None
         if self.phase=='refresh_return':
             self.absent=0 if found.get(dialog,False) else self.absent+1
-            if self.stable(lobby_key,found) and self.absent>=3:
+            if self.stable(lobby_key,found) and self.stable(series,found) and self.absent>=3:
+                self.refresh_verified=True
                 self.phase='series';self.counts={};self.events.append('즉시 갱신 팝업 닫힘 · 연속 경기 활성화 대기')
             return None
         if self.phase in ('points_confirm','star_confirm'):

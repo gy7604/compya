@@ -10,11 +10,19 @@ from engine import SafetyStop
 
 def parse_price(text):
     text=text.strip()
-    if not re.fullmatch(r'(?:[1-9][0-9]{0,2}(?:,[0-9]{3})+|[1-9][0-9]{0,8})',text):
+    if not re.fullmatch(r'(?:[1-9][0-9]{0,2}(?:,[0-9]{3})+|[1-9][0-9]{0,2}(?: [0-9]{3})+|[1-9][0-9]{0,8})',text):
         raise SafetyStop('갱신 금액을 숫자로 확실히 읽지 못했습니다. 구매하지 않습니다.')
-    amount=int(text.replace(',',''))
+    amount=int(text.replace(',','').replace(' ',''))
     if not 1<=amount<=999999999:raise SafetyStop('갱신 금액 범위를 확인할 수 없습니다.')
     return amount
+
+
+def parse_payment(text):
+    match=re.fullmatch(r'(.+?)\s+([0-9]{1,3})/([1-9][0-9]{0,2})',text.strip())
+    if not match:raise SafetyStop('갱신 금액/남은 횟수를 확실히 읽지 못했습니다.')
+    amount=parse_price(match[1]);remaining,total=int(match[2]),int(match[3])
+    if not 0<=remaining<=total<=999:raise SafetyStop('게임의 남은 갱신 횟수가 올바르지 않습니다.')
+    return amount,remaining,total
 
 
 def price_crop(png, icon, point, size):
@@ -33,7 +41,7 @@ def price_crop(png, icon, point, size):
 class PriceReader:
     def __init__(self, helper):self.helper=Path(helper)
 
-    def read(self, image, folder, variant):
+    def read(self, image, folder, variant, with_count=False):
         if not self.helper.is_file():raise SafetyStop('로컬 금액 인식 파일 PriceOCR.exe가 없습니다.')
         if variant:image=255-cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
         path=Path(folder)/('price_'+str(variant)+'.png')
@@ -44,9 +52,10 @@ class PriceReader:
         except (OSError,subprocess.TimeoutExpired) as error:
             raise SafetyStop('로컬 금액 인식 실패 · 구매하지 않습니다.') from error
         if result.returncode:raise SafetyStop('Windows 금액 인식 사용 불가 · 구매하지 않습니다.')
-        return parse_price(result.stdout.decode('utf-8',errors='replace'))
+        text=result.stdout.decode('utf-8',errors='replace')
+        return parse_payment(text) if with_count else parse_price(text)
 
-    def verify(self, adb, stop, allowed, key, dialog, other, matchers, record, size):
+    def verify(self, adb, stop, allowed, key, dialog, other, matchers, record, size,with_count=False):
         readings=[]
         with tempfile.TemporaryDirectory(prefix='compya_price_') as folder:
             for _ in range(3):
@@ -59,9 +68,20 @@ class PriceReader:
                 if not found or tuple(current_size)!=tuple(size):
                     raise SafetyStop('결제 재화가 확실하지 않아 구매하지 않습니다.')
                 image=price_crop(png,icon,record['click_point'],size)
+                if with_count:
+                    frame=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_COLOR)
+                    px,py=record['click_point']
+                    x,y,right,bottom=px+38,py-174,px+109,py-146
+                    if not (0<=x<right<=size[0] and 0<=y<bottom<=size[1]):
+                        raise SafetyStop('게임의 남은 횟수 영역이 올바르지 않습니다.')
+                    count=cv2.resize(frame[y:bottom,x:right],None,fx=4,fy=4,interpolation=cv2.INTER_CUBIC)
+                    combined=np.full((image.shape[0]+count.shape[0]+52,max(image.shape[1],count.shape[1]),3),255,np.uint8)
+                    combined[:image.shape[0],:image.shape[1]]=image
+                    combined[image.shape[0]+40:image.shape[0]+40+count.shape[0],:count.shape[1]]=count
+                    image=combined
                 for variant in (0,1):
                     if stop.is_set():return None
-                    readings.append(self.read(image,folder,variant))
+                    readings.append(self.read(image,folder,variant,with_count))
                 if stop.wait(.1):return None
         if len(set(readings))!=1:raise SafetyStop('갱신 금액 판독 결과가 달라 구매하지 않습니다.')
         if not allowed():raise SafetyStop('재화 사용 시간이 지나 구매하지 않습니다.')

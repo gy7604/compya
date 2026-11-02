@@ -663,12 +663,17 @@ class App:
                     if currency and cfg['schedule'].get('ocr_prices',False):
                         from price_ocr import PriceReader
                         other=ranking_config.get('star_confirm' if currency=='points' else 'points_confirm')
-                        amount=PriceReader(ROOT/'PriceOCR.exe').verify(
+                        receipt=PriceReader(ROOT/'PriceOCR.exe').verify(
                             adb,self.stop,lambda:daily.allowed(currency),ranking_action,
-                            ranking_config['refresh_dialog'],other,matchers,records[ranking_action],size)
-                        if amount is None:break
-                        daily.ocr_payment=(ranking_action,amount,time.monotonic())
-                        self.emit(f'랭킹 구매 금액 확인 · {"P포인트" if currency=="points" else "별"} {amount:,} · 3회 일치')
+                            ranking_config['refresh_dialog'],other,matchers,records[ranking_action],size,with_count=True)
+                        if receipt is None:break
+                        amount,remaining,total=receipt
+                        if remaining==0:
+                            if daily.entry['pending']:raise SafetyStop('이전 구매 결과 미확인 · 추가 구매 없이 확인 필요')
+                            daily.entry.update(paid_remaining=0,paid_total=total);daily.save()
+                            cfg['_ranking_done']='게임의 추가 갱신 횟수 소진';break
+                        daily.ocr_payment=(ranking_action,amount,time.monotonic(),remaining,total)
+                        self.emit(f'랭킹 구매 금액 확인 · {"P포인트" if currency=="points" else "별"} {amount:,} · 남은 {remaining}/{total}회 · 3회 일치')
                     daily.price_frames=getattr(daily,'price_frames',{})
                     for key in ('points_price','star_price'):
                         price=cfg['schedule'].get(key)
