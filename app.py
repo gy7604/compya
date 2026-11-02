@@ -26,6 +26,7 @@ from notifications import NotificationStore, NotificationDetector, default_notif
 from progress import ProgressStore, ProgressClicker, default_progress, validate_progress
 from ranking_schedule import ScheduleStore, ScheduledRunner
 from interruptions import CoachAdvice, VideoSkipper
+from runtime_resources import ensure_runtime_resources
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -33,6 +34,7 @@ ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) el
 class App:
     def __init__(self, root):
         self.root = root
+        resource_errors=ensure_runtime_resources(ROOT)
         root.title(f'V26 투구 보조 v{VERSION} · 타격 OFF / 투구 ON / 풀 플레이')
         if (ROOT/'assets'/'app.ico').exists():
             root.iconbitmap(str(ROOT/'assets'/'app.ico'))
@@ -148,6 +150,7 @@ class App:
         handler = RotatingFileHandler(ROOT/'logs'/'macro.log', maxBytes=1_000_000, backupCount=3, encoding='utf-8')
         handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
         self.logger.addHandler(handler)
+        for name in resource_errors:self.logger.warning('업데이트 보조 파일 준비 실패 · %s',name)
         root.bind('<Escape>', lambda e: self.stop.set())
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.closing = False
