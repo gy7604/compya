@@ -67,6 +67,12 @@ class RankingMachine:
         self.refresh_verified=False
         self.promotion_attempts=0
         self.promotion_absent=0
+        self.completion_reason='';self.reward_verified=False;self.resuming_reward=False
+    def request_finish(self,reason):
+        if self.completion_reason:return
+        self.completion_reason=reason;self.target_reached=True
+        if not self.reward:self.finished=True
+        self.events.append(reason+' · 보상 확인 후 랭킹 종료' if self.reward else reason)
     def stable(self,key,found):
         return bool(key) and self.counts.get(key,0)>=3
     def observe(self,found,now):
@@ -95,6 +101,12 @@ class RankingMachine:
             if key:self.counts[key]=self.counts.get(key,0)+1 if found.get(key,False) else 0
         self.reward_absent=0 if found.get(self.reward,False) else self.reward_absent+1
         lobby=found.get(lobby_key,False)
+        if (self.resuming_reward and self.phase=='reward_confirm'
+                and self.stable(lobby_key,found) and self.reward_absent>=3):
+            self.resuming_reward=False;self.reward_verified=True;self.initial_sync=False
+            self.phase='lobby';self.counts={}
+            self.events.append('랭킹 보상 수령 이후 로비 확인 · 중복 수령 없이 계속')
+            return None
         if self.initial_sync and self.phase=='lobby' and found.get(result,False):
             self.hold=True
             if self.stable(result,found) and self.stable(confirm,found):
@@ -134,7 +146,7 @@ class RankingMachine:
                 key=currency;self.phase='refresh_return';self.absent=0;self.events.append('즉시 갱신 · 등록한 재화 확인 후 결제 버튼 1회 클릭')
         elif self.phase=='reward_return':
             if self.stable(lobby_key,found) and self.reward_absent>=3:
-                self.phase='lobby';self.counts={};self.events.append('랭킹 15회 보상 팝업 종료 · 수령 가능 표시 사라짐 확인')
+                self.phase='lobby';self.counts={};self.reward_verified=True;self.events.append('랭킹 일괄 보상 팝업 종료 · 글러브 수령 가능 표시 사라짐 확인')
             return None
         elif self.phase=='reward_confirm':
             if self.stable(self.reward_confirm,found):key=self.reward_confirm;self.phase='reward_return'
@@ -147,7 +159,7 @@ class RankingMachine:
             if self.stable(lobby_key,found):
                 if self.reward and found.get(self.reward,False):
                     if self.stable(self.reward,found):
-                        key=self.reward;self.phase='reward_confirm';self.events.append('랭킹 15회 수령 가능 보상 확인 · 글러브 클릭')
+                        key=self.reward;self.phase='reward_confirm';self.events.append('랭킹 15회 글러브 일괄 보상 수령 · 하위 달성 보상 포함')
                     else:return None
                 elif self.target_reached:
                     if self.reward_absent>=3:self.finished=True;self.events.append('랭킹 목표 완료 · 보상 처리 후 중지')

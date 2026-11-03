@@ -9,7 +9,7 @@ from ranking_capture import save_rank_image,save_rank_point
 FIELDS=[('lobby','랭킹 로비 제목'),('refresh','활성 무료 갱신'),('points','일반 포인트 P 아이콘 (항상 사용)'),
         ('paid','로비 별 갱신 아이콘 (별 사용 시)'),('series','활성 연속 경기'),('disabled','비활성 연속 경기'),
         ('proceed','라인업 팝업 경기 진행'),('result','연속 경기 결과 제목'),('confirm','연속 경기 결과 확인'),
-        ('reward','15회 글러브 수령 가능 (선택)'),('reward_confirm','보상 획득 제목 → 확인 좌표 (선택)'),
+        ('reward','15회 글러브 일괄 보상 (선택)'),('reward_confirm','보상 획득 제목 → 확인 좌표 (선택)'),
         ('refresh_dialog','즉시 갱신 팝업 제목'),('points_confirm','팝업 P 아이콘 → 결제 버튼 좌표'),('star_confirm','팝업 별 아이콘 → 결제 버튼 좌표')]
 
 class RankingManager:
@@ -38,7 +38,7 @@ class RankingManager:
             ttk.Button(body,text='인식 테스트',command=lambda k=key:self.test(k)).grid(row=row,column=4,padx=3)
         body.columnconfigure(1,weight=1)
         self.refresh()
-        ttk.Label(body,text='활성 연속 경기 우선 → 비활성 확인 시 무료/포인트 갱신. 별 갱신은 위 체크를 켰을 때만 사용합니다.\n팝업 제목은 즉시 갱신, 결제 조건은 해당 버튼 안의 P/별 아이콘을 숫자 없이 캡처하세요.\n팝업 결제 항목의 클릭 위치는 각각 결제 버튼 중앙으로 지정해야 합니다. 활성/비활성 버튼은 배경까지 각각 캡처합니다.\n15회 보상은 글러브·15·보상 받기 표시를 함께 캡처하고 클릭 위치를 글러브 중앙으로 지정하세요.\n보상 팝업은 고유한 보상 획득 제목을 캡처하고 클릭 위치는 하단 확인 버튼으로 지정하세요.\n두 보상 항목과 각각의 클릭 위치를 함께 지정하면 보상 수령을 사용합니다.\n결과 화면을 1회로 집계합니다. 보상 수령 사용 시 목표 완료 후 로비 보상 처리까지 하고 중지합니다.\n시작마다 완료 횟수는 0으로 초기화됩니다. 모의 실행에서는 게임 버튼을 직접 눌러 화면을 전환하세요.',wraplength=1000).grid(row=len(FIELDS),column=0,columnspan=5,padx=4,pady=10,sticky='w')
+        ttk.Label(body,text='활성 연속 경기 우선 → 비활성 확인 시 무료/포인트 갱신. 별 갱신은 위 체크를 켰을 때만 사용합니다.\n팝업 제목은 즉시 갱신, 결제 조건은 해당 버튼 안의 P/별 아이콘을 숫자 없이 캡처하세요.\n팝업 결제 항목의 클릭 위치는 각각 결제 버튼 중앙으로 지정해야 합니다. 활성/비활성 버튼은 배경까지 각각 캡처합니다.\n15회 글러브는 하위 달성 보상을 함께 수령합니다. 글러브·15·보상 받기 표시를 함께 캡처하고 클릭 위치를 글러브 중앙으로 지정하세요.\n보상 팝업은 고유한 보상 획득 제목을 캡처하고 클릭 위치는 하단 확인 버튼으로 지정하세요.\n두 보상 항목과 각각의 클릭 위치를 함께 지정하면 보상 수령을 사용합니다.\n결과 화면을 1회로 집계합니다. 보상 수령 사용 시 목표 완료 후 로비 보상 처리까지 하고 중지합니다.\n시작마다 완료 횟수는 0으로 초기화됩니다. 모의 실행에서는 게임 버튼을 직접 눌러 화면을 전환하세요.',wraplength=1000).grid(row=len(FIELDS),column=0,columnspan=5,padx=4,pady=10,sticky='w')
         self.status=tk.StringVar(value='로비 또는 연속 경기 결과 화면에서 시작할 수 있습니다. 프로그램을 켠 채 이미지를 추가하세요. 매크로 자동 실행 중에는 중지 후 수정합니다.')
         ttk.Label(win,textvariable=self.status,wraplength=1000).pack(anchor='w',padx=12)
         bar=ttk.Frame(win);bar.pack(fill='x',padx=12,pady=10)

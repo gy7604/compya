@@ -13,6 +13,41 @@ from test_ranking import fixture, visible
 
 
 class ScheduleTests(unittest.TestCase):
+    def reward_fixture(self):
+        from registry import new_button
+        records,cfg=fixture()
+        for key in ('reward','reward_confirm'):
+            record=new_button(key);record.update(id=key,enabled=True,kind='condition',template=key+'.png',roi=[0,0,720,1280],click_mode='fixed',click_point=[600,1100],click_size=[720,1280]);records.append(record);cfg[key]=key
+        return records,cfg
+
+    def test_weekday_exhaustion_waits_for_glove_and_records_receipt(self):
+        records,cfg=self.reward_fixture();machine=RankingMachine(cfg,records,100)
+        with tempfile.TemporaryDirectory() as root:
+            daily=DailyRun(root,defaults(),lambda:datetime(2026,11,3,14,tzinfo=KST));daily.begin()
+            def observe(keys,now):
+                seen=visible(*keys);action=machine.observe(seen,now)
+                return guard_action(daily,machine,action,{key:(value,) for key,value in seen.items()},defaults())
+            for now in range(3):observe(['lobby','disabled','paid'],now)
+            self.assertFalse(machine.finished);self.assertTrue(machine.target_reached)
+            for now in range(3,6):action=observe(['lobby','disabled','paid','reward'],now)
+            self.assertEqual(action,'reward');self.assertTrue(daily.entry['reward_pending'])
+            reloaded=DailyRun(root,defaults(),lambda:datetime(2026,11,3,14,tzinfo=KST));reloaded.begin();self.assertTrue(reloaded.entry['reward_pending'])
+            for now in range(6,9):observe(['reward_confirm'],now)
+            for now in range(9,12):observe(['lobby'],now)
+            self.assertFalse(daily.entry['reward_pending']);self.assertTrue(daily.entry['rewards_claimed'])
+            for now in range(12,15):self.assertIsNone(observe(['lobby','disabled','paid'],now))
+            self.assertTrue(machine.finished);self.assertIsNone(daily.entry['pending'])
+            self.assertEqual(daily.entry['purchases'],dict(free=0,points=0,star=0))
+
+    def test_zero_paid_attempts_does_not_bypass_reward_drain(self):
+        records,cfg=self.reward_fixture();machine=RankingMachine(cfg,records,100)
+        with tempfile.TemporaryDirectory() as root:
+            daily=DailyRun(root,defaults(),lambda:datetime(2026,11,3,14,tzinfo=KST));daily.begin();daily.entry['paid_remaining']=0
+            for now in range(3):
+                seen=visible('lobby','disabled');action=machine.observe(seen,now)
+                guard_action(daily,machine,action,{key:(value,) for key,value in seen.items()},defaults())
+            self.assertFalse(machine.finished);self.assertTrue(machine.target_reached)
+
     def test_one_off_star_lobby_does_not_take_weekday_finish_branch(self):
         records,cfg=fixture();cfg['allow_star']=True
         machine=RankingMachine(cfg,records,100)

@@ -138,6 +138,30 @@ class RankingTests(unittest.TestCase):
         self.assertEqual(self.frames(m,visible('lobby','series','refresh','reward'),0),[None,None,'reward'])
         for t in range(3,12):self.assertIsNone(m.observe(visible('lobby','series','reward'),t))
         self.assertEqual(m.phase,'reward_confirm')
+    def test_finish_request_drains_available_glove_before_finish(self):
+        m=self.reward_machine();m.request_finish('daily exhausted')
+        self.assertFalse(m.finished)
+        self.assertEqual(self.frames(m,visible('lobby','reward','series'),0),[None,None,'reward'])
+        self.assertEqual(self.frames(m,visible('reward_confirm'),3),[None,None,'reward_confirm'])
+        self.frames(m,visible('lobby'),6);self.assertTrue(m.reward_verified)
+        self.frames(m,visible('lobby','series'),9)
+        self.assertTrue(m.finished);self.assertEqual(m.completion_reason,'daily exhausted')
+
+    def test_resume_reward_popup_only_confirms_once(self):
+        m=self.reward_machine();m.phase='reward_confirm';m.resuming_reward=True
+        self.assertEqual(self.frames(m,visible('reward_confirm'),0),[None,None,'reward_confirm'])
+        for t in range(3,12):self.assertIsNone(m.observe(visible('reward_confirm'),t))
+        self.frames(m,visible('lobby'),12)
+        self.assertTrue(m.reward_verified);self.assertEqual(m.phase,'lobby')
+
+    def test_resume_after_reward_popup_already_closed_does_not_claim_again(self):
+        m=self.reward_machine();m.phase='reward_confirm';m.resuming_reward=True
+        self.assertEqual(self.frames(m,visible('lobby','series'),0),[None,None,None])
+        self.assertTrue(m.reward_verified);self.assertFalse(m.resuming_reward)
+        self.assertEqual(self.frames(m,visible('lobby','series'),3),[None,None,'series'])
+
+    def test_finish_without_rewards_preserves_previous_behavior(self):
+        m=self.machine();m.request_finish('exhausted');self.assertTrue(m.finished)
     def test_reward_popup_close_and_marker_reset_before_next_game(self):
         m=self.reward_machine()
         self.frames(m,visible('lobby','reward'),0)

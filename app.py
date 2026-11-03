@@ -405,7 +405,12 @@ class App:
             ranking_config=dict(cfg.get('ranking',default_ranking()))
             ranking_config['all_attempts']=bool(cfg.get('_daily'))
             ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
-            if cfg.get('_daily'):ranking.completed=cfg['_daily'].entry['completed']
+            if cfg.get('_daily'):
+                ranking.completed=cfg['_daily'].entry['completed']
+                if ranking.reward and cfg['_daily'].entry.get('reward_pending'):
+                    ranking.phase='reward_confirm'
+                    ranking.resuming_reward=True
+                    self.emit('랭킹 보상 수령 이어받기 · 획득 팝업 확인 후 로비 복귀')
             recovery_config=recovery_for_mode(cfg.get('recovery',default_recovery()),ranking_config['enabled'])
             recovery=RecoveryMachine(recovery_config,cfg['buttons'])
             if cfg.get('_activate_route'):recovery.active=True
@@ -660,9 +665,12 @@ class App:
                 while recovery.events:self.emit(recovery.events.pop(0))
                 if recovery.restored:
                     transition_watch=TransitionWatch()
-                    completed=ranking.completed;target_reached=ranking.target_reached
+                    completed=ranking.completed;target_reached=ranking.target_reached;completion_reason=ranking.completion_reason
                     ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
                     ranking.completed=completed;ranking.target_reached=target_reached
+                    ranking.completion_reason=completion_reason
+                    if ranking.reward and cfg.get('_daily') and cfg['_daily'].entry.get('reward_pending'):
+                        ranking.phase='reward_confirm';ranking.resuming_reward=True
                     machine=WorkflowMachine(records,rules,now,detection_frames=frames)
                     progress=ProgressClicker(progress_config,cfg['buttons'])
                     if ranking_config['enabled']:
@@ -736,7 +744,7 @@ class App:
                     ranking_action=guard_action(daily,ranking,ranking_action,results,cfg['schedule'])
                 while ranking.events:self.emit(ranking.events.pop(0))
                 if ranking.finished:
-                    if cfg.get('_daily'):cfg['_ranking_done']='오늘 허용된 도전 횟수 소진'
+                    if cfg.get('_daily'):cfg['_ranking_done']=ranking.completion_reason or '오늘 허용된 도전 횟수 소진'
                     self.emit('랭킹 목표 횟수 완료 · 다음 연속 경기 시작 전에 중지');break
                 if ranking.hold:
                     try:transition_watch.observe(('랭킹',ranking.phase),now,300)

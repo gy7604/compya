@@ -278,6 +278,12 @@ def guard_action(daily, machine, action, results, config):
     """Enforce time/currency at the final payment boundary, including recovery."""
     found = lambda key: bool(key and results.get(key, (False,))[0])
     r = machine.config
+    if machine.reward_verified:
+        daily.entry['reward_pending']=False
+        daily.entry['rewards_claimed']=True
+        daily.save();machine.reward_verified=False
+    if action and action==r.get('reward'):
+        daily.entry['reward_pending']=True;daily.save()
     before=daily.entry['completed']
     completed_after_purchase=machine.completed>daily.entry.get('pending_completed',before)
     daily.completed(machine.completed)
@@ -291,7 +297,7 @@ def guard_action(daily, machine, action, results, config):
         machine.refresh_verified=False
     if machine.phase == 'lobby' and machine.stable(r['lobby'], {}) and machine.stable(r['disabled'], {}):
         if daily.entry.get('paid_remaining')==0 and not daily.entry['pending']:
-            machine.finished=True;machine.events.append('게임의 추가 갱신 횟수 소진 확인');return None
+            machine.request_finish('게임의 추가 갱신 횟수 소진 확인');return None
         if (not r.get('paid') and not any(found(r[k]) for k in ('series','points','refresh'))):
             raise SafetyStop('다음 랭킹 갱신 재화 미확인 · 별 갱신 이미지를 먼저 등록하세요.')
         exhausted = config.get('exhausted')
@@ -299,8 +305,7 @@ def guard_action(daily, machine, action, results, config):
                              and not any(found(r[k]) for k in ('series','points','refresh')))
         daily.exhausted_frames = getattr(daily,'exhausted_frames',0)+1 if exhausted and found(exhausted) else 0
         if weekday_star_only or daily.exhausted_frames>=3:
-            machine.finished = True
-            machine.events.append('오늘 사용 가능한 랭킹 도전 횟수 소진 확인')
+            machine.request_finish('오늘 사용 가능한 랭킹 도전 횟수 소진 확인')
             return None
     currency = next((kind for key, kind in [('refresh','free'),('points_confirm','points'),
                                             ('star_confirm','star')] if action and action == r[key]), None)
