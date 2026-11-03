@@ -3,8 +3,9 @@ from pathlib import Path
 
 from ball_guard import FILES as BALL_FILES
 from league_bonus import FILES as BONUS_FILES
+from sponsor import FILES as SPONSOR_FILES
 
-FILES=('PriceOCR.exe','coach_advice.png','league_next_match.png','league_round_label.png','league_play_hud.png')+BALL_FILES+BONUS_FILES
+FILES=('PriceOCR.exe','coach_advice.png','league_next_match.png','league_round_label.png','league_play_hud.png')+BALL_FILES+BONUS_FILES+SPONSOR_FILES
 
 
 def ensure_runtime_resources(root):

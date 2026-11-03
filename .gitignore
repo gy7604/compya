@@ -30,3 +30,5 @@ league_timing*.json
 league_rewards.json
 league_reward*.json
 league_bonus_state.json
+ball_rest.json
+sponsor_state.json

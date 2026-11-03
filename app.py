@@ -19,7 +19,9 @@ from league_count import LeagueCounter
 from league_season import SeasonProgress,RoundReader
 from league_timing import LeagueTiming,START_NAMES,duration_text
 from league_rewards import LeagueRewards
-from ball_guard import BallGuard, halt_for_balls
+from ball_guard import BallGuard
+from ball_rest import BallRest, begin_ball_rest
+from sponsor import Sponsor
 from league_bonus import LeagueBonus
 from collections import deque
 from log_view import concise_status,important_message
@@ -444,6 +446,8 @@ class App:
                 video.end_keys=video_ends
             rewards=LeagueRewards(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             balls=BallGuard(ROOT)
+            rest=BallRest(ROOT,dry=cfg['dry'])
+            sponsor=Sponsor(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             bonus=LeagueBonus(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             season=SeasonProgress(ROOT,dry=cfg['dry'])
             timing=LeagueTiming(ROOT,dry=cfg['dry'])
@@ -568,13 +572,27 @@ class App:
                     if not self.stop.is_set():adb.launch_app(recovery_config['package'])
                 watchdog.reset()
 
+            def reset_maintenance():
+                nonlocal machine,progress,recovery,transition_watch,last_process_poll
+                machine=WorkflowMachine(records,rules,time.monotonic(),detection_frames=frames)
+                progress=ProgressClicker(progress_config,cfg['buttons'])
+                launches,last_launch=recovery.launches,recovery.last_launch
+                recovery=RecoveryMachine(recovery_config,cfg['buttons'])
+                recovery.launches,recovery.last_launch=launches,last_launch
+                transition_watch=TransitionWatch();watchdog.reset();last_process_poll=float('-inf')
+
             while not self.stop.is_set():
+                if not ranking_config['enabled']:
+                    if rest.tick():reset_maintenance();time_event()
+                    while rest.events:
+                        rest_message=rest.events.pop(0);self.emit(rest_message)
+                        if hasattr(self,'events'):self.events.put(('league_time',rest_message))
                 try:
                     if need_connect:
                         if player_restart:player_restart.connect_selected()
                         else:adb.connect()
                         need_connect=False
-                    if recovery_config['enabled']:
+                    if recovery_config['enabled'] and not ((rest.active or sponsor.active) and not ranking_config['enabled']):
                         poll_now=time.monotonic()
                         if poll_now-last_process_poll>=2:
                             last_process_poll=poll_now
@@ -590,10 +608,14 @@ class App:
                     next_png = adb.screenshot()
                     adb_failures=0
                 except SafetyStop as error:
+                    if rest.active and not ranking_config['enabled']:
+                        self.stop.wait(2);continue
                     if watch_enabled and player_restart and not cfg['dry']:
                         reboot_player(str(error));self.stop.wait(1);continue
                     raise
                 except RuntimeError as connection_error:
+                    if rest.active and not ranking_config['enabled']:
+                        need_connect=True;self.stop.wait(2);continue
                     if not player_restart:raise
                     adb_failures+=1;need_connect=True
                     self.emit(f'ADB 연결/화면 수신 실패 · {adb_failures}/3회 · {connection_error}')
@@ -603,12 +625,33 @@ class App:
                             adb_failures=0;need_connect=False;last_process_poll=float('-inf')
                     self.stop.wait(2);continue
                 previous_png,png=png,next_png
-                if balls.observe(png,time.monotonic() if isinstance(png,bytes) else 0,self.stop):
-                    halt_for_balls(self,cfg,balls,png,ROOT);break
-                if balls.hold:
+                maintenance_now=time.monotonic() if isinstance(png,bytes) else 0
+                if not ranking_config['enabled']:
+                    if balls.observe(png,maintenance_now,self.stop):
+                        if not rest.active:
+                            begin_ball_rest(self,cfg,balls,rest,png,ROOT)
+                            timing.cancel();time_event()
+                    ball_point=rest.close_point(balls.layout,maintenance_now) if rest.active else None
+                    if ball_point:
+                        if not cfg['dry'] and not self.stop.is_set():adb.tap(ball_point)
+                        watchdog.reset();self.stop.wait(.2);continue
+                sponsor_was_active=sponsor.active
+                sponsor_point=sponsor.observe(png,maintenance_now,self.stop)
+                if sponsor.active and not sponsor_was_active:timing.cancel();time_event()
+                while sponsor.events:self.emit(sponsor.events.pop(0))
+                if sponsor.finished:reset_maintenance()
+                if sponsor.hold:
+                    watchdog.reset();transition_watch=TransitionWatch()
+                    if sponsor_point and not cfg['dry'] and not self.stop.is_set():adb.tap(sponsor_point)
+                    self.stop.wait(.2);continue
+                if rest.active and not ranking_config['enabled']:
+                    if cfg.get('_handoff') and cfg['_handoff']():
+                        cfg['_yielded']=True;self.emit('볼 충전 대기 중 랭킹 시간 도달 · 랭킹으로 전환');break
+                    watchdog.reset();transition_watch=TransitionWatch();self.stop.wait(1);continue
+                if balls.hold and not ranking_config['enabled']:
                     watchdog.reset();transition_watch=TransitionWatch()
                     self.stop.wait(.2);continue
-                bonus_point=bonus.observe(png,time.monotonic() if isinstance(png,bytes) else 0,self.stop)
+                bonus_point=bonus.observe(png,maintenance_now,self.stop)
                 while bonus.events:self.emit(bonus.events.pop(0))
                 if bonus.hold:
                     watchdog.reset();transition_watch=TransitionWatch()
