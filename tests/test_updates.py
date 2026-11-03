@@ -147,10 +147,12 @@ class UpdateTests(unittest.TestCase):
         for name in ('PriceOCR.exe','assets/league_next_match.png','assets/league_round_label.png'):
             self.assertTrue(safe_member('V26Macro/'+name))
         self.assertFalse(safe_member('V26Macro/league_season.json'))
+        self.assertFalse(safe_member('V26Macro/league_timing.json'))
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
             root,package=self.prepare_install(folder)
             (root/'PriceOCR.exe').write_bytes(b'MZoldocr')
             (root/'league_season.json').write_bytes(b'private progress')
+            (root/'league_timing.json').write_bytes(b'private durations')
             (package/'PriceOCR.exe').write_bytes(b'MZnewocr')
             (package/'assets').mkdir()
             for name in ('league_next_match.png','league_round_label.png'):(package/'assets'/name).write_bytes(b'new image')
@@ -161,6 +163,7 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual((root/'assets/league_next_match.png').read_bytes(),b'preserved image')
             self.assertEqual((root/'assets/league_round_label.png').read_bytes(),b'new image')
             self.assertEqual((root/'league_season.json').read_bytes(),b'private progress')
+            self.assertEqual((root/'league_timing.json').read_bytes(),b'private durations')
             self.assert_user_data(root)
 
     def test_invalid_optional_ocr_runtime_does_not_start_replacement(self):

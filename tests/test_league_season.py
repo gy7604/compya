@@ -7,7 +7,7 @@ from unittest.mock import Mock,patch
 import cv2
 import numpy as np
 from engine import SafetyStop
-from league_season import SeasonProgress,RoundReader
+from league_season import SeasonProgress,RoundReader,RoundTextReader,parse_round
 
 
 class SeasonTests(unittest.TestCase):
@@ -36,6 +36,28 @@ class SeasonTests(unittest.TestCase):
             season.playing();season.result();self.assertIn('144/144경기 완료',season.text())
             season.lobby(1);season.lobby(1);self.assertEqual(season.data['completed'],0)
             season.lobby(18);season.lobby(18);self.assertEqual(season.data['completed'],17)
+
+    def test_result_chain_updates_when_next_lobby_ocr_is_missed(self):
+        with tempfile.TemporaryDirectory() as root:
+            season=SeasonProgress(root);season.lobby(28);season.lobby(28)
+            for round_ in (28,29,30):
+                self.assertTrue(season.playing())
+                self.assertFalse(season.playing())
+                self.assertEqual(season.data['completed'],round_-1)
+                self.assertEqual(season.data['round'],round_)
+                self.assertTrue(season.result())
+                self.assertFalse(season.result())
+                self.assertEqual(season.data['completed'],round_)
+
+    def test_new_season_splash_clears_previous_144_and_caps_postseason(self):
+        with tempfile.TemporaryDirectory() as root:
+            season=SeasonProgress(root);season.lobby(144);season.lobby(144)
+            season.playing();season.result()
+            self.assertFalse(season.playing());self.assertEqual(season.data['round'],144)
+            resumed=SeasonProgress(root)
+            self.assertTrue(resumed.new_season());self.assertIn('0/144',resumed.text())
+            self.assertFalse(resumed.new_season())
+            resumed.playing();resumed.result();self.assertEqual(resumed.data['completed'],1)
 
     def test_invalid_or_disagreeing_round_never_changes_baseline(self):
         with tempfile.TemporaryDirectory() as root:
@@ -75,6 +97,9 @@ class RoundReaderTests(unittest.TestCase):
         reader=self.reader();self.assertEqual(reader.observe(self.png(),1,threading.Event()),28)
         self.assertEqual(reader.reader.read.call_count,2)
         self.assertIsNone(reader.observe(self.png(),1.5,threading.Event()))
+        self.assertTrue(reader.visible)
+        crop=reader.reader.read.call_args.args[0]
+        self.assertGreater(crop.shape[1],74*4)  # Include ROUND, not just the digits.
 
     def test_ocr_uncertain_failure_and_out_of_range_are_nonfatal(self):
         for values in ([28,29],[145,145],SafetyStop('OCR failed')):
@@ -88,3 +113,15 @@ class RoundReaderTests(unittest.TestCase):
         self.assertIsNone(reader.observe(self.png(),2,threading.Event()));reader.reader.read.assert_not_called()
         reader.title.find.return_value=(True,(0,0),1.,(1080,1920))
         self.assertIsNone(reader.observe(self.png(),3,threading.Event()));reader.reader.read.assert_not_called()
+
+    def test_full_round_text_rejects_unrelated_numbers(self):
+        for text,expected in [('ROUND 1',1),('ROUND 28\r\n',28),('R0UND 144',144)]:
+            self.assertEqual(parse_round(text),expected)
+        for text in ('28','ROUND 0','ROUND 145','ROUND 028','ROUND 2 8','ROUND 28 PLAY BALL'):
+            with self.assertRaises(ValueError):parse_round(text)
+
+    def test_local_round_reader_uses_separate_parser_not_currency_parser(self):
+        with tempfile.TemporaryDirectory() as root:
+            helper=Path(root,'PriceOCR.exe');helper.touch()
+            with patch('league_season.subprocess.run',return_value=Mock(returncode=0,stdout=b'ROUND 8\r\n')):
+                self.assertEqual(RoundTextReader(helper).read(np.zeros((40,160,3),np.uint8),root,0),8)

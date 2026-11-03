@@ -24,6 +24,8 @@ def validate(records):
             raise ValueError('이미지 용도가 올바르지 않습니다.')
         if type(r.get('video_skip',False)) is not bool:
             raise ValueError('영상 스킵 사용 여부가 올바르지 않습니다.')
+        if any(type(r.get(key,False)) is not bool for key in ('season_start','league_match_start')):
+            raise ValueError('리그 시즌/경기 시작 표시 설정이 올바르지 않습니다.')
         if type(r.get('video_text_mask',False)) is not bool or (r.get('video_text_mask') and not r.get('video_skip')):
             raise ValueError('영상 글자 인식은 영상 스킵 이미지에만 사용할 수 있습니다.')
         if any(type(r.get(k,False)) is not bool for k in ('video_intro','video_intro_end')) or (r.get('video_intro') and not r.get('video_skip')):

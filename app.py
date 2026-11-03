@@ -17,6 +17,7 @@ from speed import MODES, DEFAULT_MODE, speed_settings
 from clicks import click_point
 from league_count import LeagueCounter
 from league_season import SeasonProgress,RoundReader
+from league_timing import LeagueTiming,START_NAMES,duration_text
 from league_rewards import LeagueRewards
 from collections import deque
 from log_view import concise_status,important_message
@@ -116,6 +117,8 @@ class App:
         ttk.Label(root,textvariable=self.league_count_text).pack(anchor='w',padx=12,pady=3)
         self.league_season_text=tk.StringVar(value=SeasonProgress(ROOT).text())
         ttk.Label(root,textvariable=self.league_season_text).pack(anchor='w',padx=12,pady=3)
+        self.league_time_text=tk.StringVar(value=LeagueTiming(ROOT).text())
+        ttk.Label(root,textvariable=self.league_time_text).pack(anchor='w',padx=12,pady=3)
         update_bar = ttk.Frame(root)
         update_bar.pack(fill='x', padx=12, pady=5)
         self.update_status = tk.StringVar(value=f'현재 v{VERSION} · 시작 시 업데이트 확인')
@@ -430,10 +433,27 @@ class App:
             count_enabled=not ranking_config['enabled'] and bool(counter.start and counter.result)
             rewards=LeagueRewards(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             season=SeasonProgress(ROOT,dry=cfg['dry'])
+            timing=LeagueTiming(ROOT,dry=cfg['dry'])
             round_reader=RoundReader(ROOT) if count_enabled else None
+            lobby_since=None;lobby_ready=False;last_time_text=None
             def season_event():
                 if hasattr(self,'events'):self.events.put(('league_season',('모의 · ' if cfg['dry'] else '')+season.text(ranking_config['enabled'])))
+            def time_event(now=None):
+                nonlocal last_time_text
+                label=('모의 · ' if cfg['dry'] else '')+timing.text(now)
+                if ranking_config['enabled']:label+=' · 랭킹 진행 중'
+                if label!=last_time_text and hasattr(self,'events'):self.events.put(('league_time',label))
+                last_time_text=label
+            def league_tap(key,now):
+                if not count_enabled:return
+                record=records[key]
+                if record.get('season_start') or record['name']=='새로운리그의시작':
+                    if season.new_season():season_event()
+                    timing.cancel();time_event(now)
+                if record.get('league_match_start') or record['name'] in START_NAMES:
+                    timing.start(now);time_event(now)
             season_event()
+            time_event()
             if hasattr(self,'events'):self.events.put(('league_count',0,cfg['dry'],count_enabled))
             referenced = {key for rule in rules if rule['enabled'] for key in
                           [rule['trigger'], rule['success']]+[s['button'] for s in rule['steps']] if key}
@@ -494,6 +514,7 @@ class App:
                 if self.stop.is_set():return False
                 if cfg['dry']:
                     raise SafetyStop('모의 복구 감지 · '+reason+' · LDPlayer 재시작/게임 실행 안 함')
+                timing.cancel();time_event()
                 while not self.stop.is_set():
                     if not recovery.reserve_player_restart(time.monotonic()):return False
                     while recovery.events:self.emit(recovery.events.pop(0))
@@ -529,6 +550,7 @@ class App:
                 if player_restart:
                     reboot_player('화면 전환 미확인')
                 elif recovery.restart_stalled(time.monotonic()):
+                    timing.cancel();time_event()
                     adb.stop_app(recovery_config['package'])
                     if not self.stop.is_set():adb.launch_app(recovery_config['package'])
                 watchdog.reset()
@@ -547,6 +569,7 @@ class App:
                             while recovery.events:self.emit(recovery.events.pop(0))
                             if launch:
                                 if self.stop.is_set():break
+                                timing.cancel();time_event()
                                 if not cfg['dry']:adb.launch_app(recovery_config['package'])
                                 self.emit('모의 게임 재실행 · 실제 실행 안 함' if cfg['dry'] else '게임 실행 요청 전송 · 접속 화면 대기')
                         if not recovery.running:
@@ -567,7 +590,9 @@ class App:
                             adb_failures=0;need_connect=False;last_process_poll=float('-inf')
                     self.stop.wait(2);continue
                 previous_png,png=png,next_png
-                reward_point=rewards.observe(png,time.monotonic(),self.stop) if rewards.enabled else None
+                frame_now=time.monotonic() if rewards.enabled or count_enabled else None
+                if count_enabled:time_event(frame_now)
+                reward_point=rewards.observe(png,frame_now,self.stop) if rewards.enabled else None
                 while rewards.events:self.emit(rewards.events.pop(0))
                 if rewards.hold:
                     watchdog.reset();transition_watch=TransitionWatch()
@@ -594,6 +619,7 @@ class App:
                             last_process_poll=float('-inf')
                         elif recovery.restart_stalled(time.monotonic()):
                             if self.stop.is_set():break
+                            timing.cancel();time_event()
                             adb.stop_app(recovery_config['package'])
                             if self.stop.is_set():break
                             adb.launch_app(recovery_config['package'])
@@ -612,8 +638,18 @@ class App:
                             heartbeat=orientation_now
                         self.stop.wait(.2);continue
                 if round_reader:
-                    round_=round_reader.observe(png,time.monotonic(),self.stop)
+                    round_now=time.monotonic()
+                    round_=round_reader.observe(png,round_now,self.stop)
                     if round_ is not None and season.lobby(round_):season_event()
+                    if not round_reader.visible:
+                        lobby_since=None;lobby_ready=False
+                    else:
+                        if lobby_since is None:lobby_since=round_now
+                        if round_ is not None and season.frames>=2:lobby_ready=True
+                        # Give two separate lobby frames a chance before PLAY BALL.
+                        # A failed status read must never block gameplay indefinitely.
+                        if not lobby_ready and round_now-lobby_since<4:
+                            self.stop.wait(.1);continue
                 video_results={key:matchers[key].find(png) for key in video_keys+video_ends}
                 if video_results:
                     video_size=next(iter(video_results.values()))[3]
@@ -684,6 +720,7 @@ class App:
                         _,matched_point,score,_=results[recovery_action]
                         point=click_point(records[recovery_action],matched_point,size)
                         if not cfg['dry']:adb.tap(point)
+                        league_tap(recovery_action,now)
                         last_click=dict(button=recovery_action,point=point,time=now,dry=cfg['dry'])
                         self.emit(f'{"모의 복구 탭" if cfg["dry"] else "복구 탭"} {records[recovery_action]["name"]} 좌표={point} 점수={score:.3f}')
                     if now-heartbeat>=5:
@@ -697,9 +734,14 @@ class App:
                     transition_watch=TransitionWatch()
                     watchdog.reset()
                     if season.result():season_event()
+                    elapsed=timing.finish(now)
+                    time_event(now)
                     self.events.put(('league_count',counter.completed,cfg['dry'],True))
                     self.emit(f'{"모의 집계" if cfg["dry"] else "리그 경기 완료"} · 이번 실행 {counter.completed}경기')
-                if count_enabled and counter.armed and results[counter.start][0] and not results[counter.result][0] and season.playing():season_event()
+                    if elapsed:self.emit(f'리그 경기 시간 · {duration_text(elapsed[0])}'+(' · 경기 도중 시작하여 평균 제외' if elapsed[1] else ' · 경기 시작부터 결과 확인까지'))
+                if count_enabled and counter.armed and results[counter.start][0] and not results[counter.result][0]:
+                    if season.playing():season_event()
+                    timing.start(now,partial=True);time_event(now)
                 if (count_enabled and counter.result_frames>=counter.frames
                         and cfg.get('_handoff') and cfg['_handoff']()):
                     cfg['_yielded']=True
@@ -795,6 +837,7 @@ class App:
                     point = click_point(records[action],matched_point,size)
                     if not cfg['dry']:
                         adb.tap(point)
+                    league_tap(action,now)
                     last_click=dict(button=action,point=point,time=now,dry=cfg['dry'])
                     taps += 1
                     label = records[action]['name']
@@ -860,6 +903,8 @@ class App:
                 except Exception as diagnostic_error:
                     self.emit(f'중지 화면 저장 실패 · {diagnostic_error}')
         finally:
+            if 'timing' in locals():
+                timing.cancel();time_event()
             if not cfg.get('_scheduled'):self.stop.set()
             self.emit('실행 종료')
 
@@ -883,6 +928,9 @@ class App:
             except queue.Empty:
                 break
             if isinstance(msg, tuple):
+                if msg[0]=='league_time':
+                    if not self.closing:self.league_time_text.set(msg[1])
+                    continue
                 if msg[0]=='league_season':
                     if not self.closing:self.league_season_text.set(msg[1])
                     continue
