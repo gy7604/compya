@@ -29,3 +29,4 @@ league_season*.json
 league_timing*.json
 league_rewards.json
 league_reward*.json
+league_bonus_state.json

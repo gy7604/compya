@@ -19,6 +19,8 @@ from league_count import LeagueCounter
 from league_season import SeasonProgress,RoundReader
 from league_timing import LeagueTiming,START_NAMES,duration_text
 from league_rewards import LeagueRewards
+from ball_guard import BallGuard, halt_for_balls
+from league_bonus import LeagueBonus
 from collections import deque
 from log_view import concise_status,important_message
 from stall import StallWatch,TransitionWatch
@@ -441,6 +443,8 @@ class App:
                 video_ends=list(dict.fromkeys(video_ends+[counter.start,counter.result]+recovery_ends))
                 video.end_keys=video_ends
             rewards=LeagueRewards(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
+            balls=BallGuard(ROOT)
+            bonus=LeagueBonus(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             season=SeasonProgress(ROOT,dry=cfg['dry'])
             timing=LeagueTiming(ROOT,dry=cfg['dry'])
             round_reader=RoundReader(ROOT) if count_enabled else None
@@ -599,6 +603,17 @@ class App:
                             adb_failures=0;need_connect=False;last_process_poll=float('-inf')
                     self.stop.wait(2);continue
                 previous_png,png=png,next_png
+                if balls.observe(png,time.monotonic() if isinstance(png,bytes) else 0,self.stop):
+                    halt_for_balls(self,cfg,balls,png,ROOT);break
+                if balls.hold:
+                    watchdog.reset();transition_watch=TransitionWatch()
+                    self.stop.wait(.2);continue
+                bonus_point=bonus.observe(png,time.monotonic() if isinstance(png,bytes) else 0,self.stop)
+                while bonus.events:self.emit(bonus.events.pop(0))
+                if bonus.hold:
+                    watchdog.reset();transition_watch=TransitionWatch()
+                    if bonus_point and not cfg['dry'] and not self.stop.is_set():adb.tap(bonus_point)
+                    self.stop.wait(.2);continue
                 frame_now=time.monotonic() if rewards.enabled or count_enabled else None
                 if count_enabled:time_event(frame_now)
                 reward_point=rewards.observe(png,frame_now,self.stop) if rewards.enabled else None

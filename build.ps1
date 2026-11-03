@@ -18,6 +18,11 @@ Copy-Item -LiteralPath "$PSScriptRoot/README.md", "$PSScriptRoot/TEST_RESULTS.md
 $compatAssets="$PSScriptRoot/dist/V26Macro/_internal/compya_resources"
 New-Item -ItemType Directory -Force $compatAssets | Out-Null
 Copy-Item -LiteralPath "$PSScriptRoot/dist/V26Macro/PriceOCR.exe", "$PSScriptRoot/assets/coach_advice.png", "$PSScriptRoot/assets/league_next_match.png", "$PSScriptRoot/assets/league_round_label.png", "$PSScriptRoot/assets/league_play_hud.png" -Destination $compatAssets
+$leagueSafetyAssets = @('ball_shop_description.png','ball_shop_icon.png','ball_result_icon.png','ball_result_disabled.png','ball_info_title.png','ball_info_icon.png','league_bonus_ready.png','league_bonus_title.png','league_bonus_close.png','league_bonus_done.png')
+foreach ($assetName in $leagueSafetyAssets) {
+    Copy-Item -LiteralPath "$PSScriptRoot/assets/$assetName" -Destination "$PSScriptRoot/dist/V26Macro/assets/$assetName"
+    Copy-Item -LiteralPath "$PSScriptRoot/assets/$assetName" -Destination "$compatAssets/$assetName"
+}
 $testProcess = Start-Process -FilePath "$PSScriptRoot/dist/V26Macro/V26Macro.exe" -ArgumentList '--self-test' -WindowStyle Hidden -PassThru
 if (-not $testProcess.WaitForExit(30000)) { throw 'Executable self-test timed out' }
 $testProcess.Refresh()

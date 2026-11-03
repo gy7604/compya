@@ -1,7 +1,10 @@
 """Bootstrap fixed bundled resources even when an older updater skips new root files."""
 from pathlib import Path
 
-FILES=('PriceOCR.exe','coach_advice.png','league_next_match.png','league_round_label.png','league_play_hud.png')
+from ball_guard import FILES as BALL_FILES
+from league_bonus import FILES as BONUS_FILES
+
+FILES=('PriceOCR.exe','coach_advice.png','league_next_match.png','league_round_label.png','league_play_hud.png')+BALL_FILES+BONUS_FILES
 
 
 def ensure_runtime_resources(root):
