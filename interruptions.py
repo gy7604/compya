@@ -16,11 +16,11 @@ class VideoSkipper:
         self.absent=0 if present else self.absent+1
         for key in self.keys:self.counts[key]=self.counts.get(key,0)+1 if found.get(key,False) else 0
         if self.intro:
-            if any(found.get(k,False) for k in self.end_keys) or now>=self.intro_until or self.intro_taps>=15:
+            if any(found.get(k,False) for k in self.end_keys) or now>=self.intro_until or self.intro_taps>=30:
                 self.intro=None;self.resumed=True;self.pending=False;self.hold=False
                 return None
             self.hold=True
-            if now-self.last>=2:
+            if now-self.last>=1:
                 self.last=now;self.intro_taps+=1
                 return self.intro
             return None

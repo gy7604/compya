@@ -431,6 +431,12 @@ class App:
             count_ids={r['name']:r['id'] for r in cfg['buttons'] if r['enabled'] and r['template']}
             counter=LeagueCounter(count_ids.get(cfg.get('league_start',''),''),count_ids.get(cfg.get('league_result',''),''),frames=speed_settings(cfg.get('speed',DEFAULT_MODE))[0])
             count_enabled=not ranking_config['enabled'] and bool(counter.start and counter.result)
+            if count_enabled:
+                # Stop introductory taps as soon as gameplay/results are visible,
+                # even if a short PLAY BALL overlay escaped capture.
+                recovery_ends=([recovery_config['goal']]+recovery_config['steps'][-1:]) if recovery_config['enabled'] else []
+                video_ends=list(dict.fromkeys(video_ends+[counter.start,counter.result]+recovery_ends))
+                video.end_keys=video_ends
             rewards=LeagueRewards(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             season=SeasonProgress(ROOT,dry=cfg['dry'])
             timing=LeagueTiming(ROOT,dry=cfg['dry'])

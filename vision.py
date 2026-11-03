@@ -1,6 +1,27 @@
 from pathlib import Path
+import threading
 import cv2
 import numpy as np
+
+
+_screen_cache=threading.local()
+
+
+def decode_screen(png,color=False):
+    """Share the current immutable screenshot within one worker, never across frames.
+
+    Keep the native gray decoder: converting BGR to gray can change rounding and
+    therefore strict price/image comparisons. Only two images are retained.
+    """
+    flag=cv2.IMREAD_COLOR if color else cv2.IMREAD_GRAYSCALE
+    if not isinstance(png,bytes):return cv2.imdecode(np.frombuffer(png,np.uint8),flag)
+    if getattr(_screen_cache,'png',None) is not png:
+        _screen_cache.png=png;_screen_cache.images={}
+    if flag not in _screen_cache.images:
+        image=cv2.imdecode(np.frombuffer(png,np.uint8),flag)
+        if image is not None:image.flags.writeable=False
+        _screen_cache.images[flag]=image
+    return _screen_cache.images[flag]
 
 
 class Matcher:
@@ -15,7 +36,7 @@ class Matcher:
         self.color_template=cv2.imdecode(np.fromfile(Path(path),dtype=np.uint8),cv2.IMREAD_COLOR) if color_tolerance is not None else None
 
     def find(self, png):
-        screen = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_GRAYSCALE)
+        screen = decode_screen(png)
         if screen is None:
             raise ValueError('ADB 화면 PNG 해독 실패')
         h, w = screen.shape
@@ -34,7 +55,7 @@ class Matcher:
         contrast_ok=patch_gray.std()>=2
         color_ok=True
         if self.color_tolerance is not None:
-            color_screen=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_COLOR)
+            color_screen=decode_screen(png,color=True)
             patch=color_screen[y+loc[1]:y+loc[1]+th,x+loc[0]:x+loc[0]+tw]
             error=float(np.abs(patch.astype(np.float32)-self.color_template.astype(np.float32)).mean())
             color_ok=error<=self.color_tolerance
@@ -55,7 +76,7 @@ class OverlayMatcher(Matcher):
         if self.template.std()<2:raise ValueError('영상 글자 형태가 명확하지 않습니다.')
 
     def find(self,png):
-        screen=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_COLOR)
+        screen=decode_screen(png,color=True)
         if screen is None:raise ValueError('ADB 화면 PNG 해독 실패')
         h,w=screen.shape[:2];x,y,rw,rh=self.roi or (0,0,w,h)
         if min(x,y)<0 or min(rw,rh)<=0 or x+rw>w or y+rh>h:raise ValueError('검색 영역이 화면을 벗어납니다.')
@@ -73,7 +94,7 @@ class PriceMatcher(Matcher):
     def find(self, png):
         found,center,score,size=super().find(png)
         if found:
-            screen=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_GRAYSCALE)
+            screen=decode_screen(png)
             h,w=self.template.shape
             x,y=center[0]-w//2,center[1]-h//2
             patch=screen[y:y+h,x:x+w]

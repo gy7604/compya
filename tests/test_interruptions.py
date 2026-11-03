@@ -22,9 +22,48 @@ class VideoTests(unittest.TestCase):
             guard=VideoSkipper(['vs'],['vs'],['play'])
             guard.observe({'vs':True},0);guard.observe({'vs':True},1)
             if stop_time==32:
-                for t in range(3,30,2):self.assertEqual(guard.observe({},t),'vs')
+                for t in range(2,31):self.assertEqual(guard.observe({},t),'vs')
             self.assertIsNone(guard.observe({},stop_time));self.assertFalse(guard.hold)
         with self.assertRaises(ValueError):VideoSkipper(['vs'],['vs'],[])
+
+    def test_faster_intro_taps_stop_on_gameplay_even_if_playball_was_missed(self):
+        guard=VideoSkipper(['vs'],['vs'],['play','pitch','result'])
+        guard.observe({'vs':True},0);self.assertEqual(guard.observe({'vs':True},.2),'vs')
+        self.assertIsNone(guard.observe({},.7))
+        self.assertEqual(guard.observe({},1.2),'vs')
+        self.assertIsNone(guard.observe({'pitch':True},2.2))
+        self.assertFalse(guard.hold);self.assertTrue(guard.resumed)
+        self.assertIsNone(guard.observe({'pitch':True},3.2))
+
+    def test_runner_ends_intro_on_recovery_field_start_without_legacy_playball(self):
+        import itertools,tempfile,threading
+        from unittest.mock import Mock,patch
+        from app import App
+        from registry import new_button
+        from test_recovery import fixture
+        records,recovery=fixture();recovery.update(target='league')
+        for key in ('vs','legacy','result'):
+            r=new_button(key);r.update(id=key,enabled=True,template=key+'.png',kind='condition')
+            records.append(r)
+        records[-3].update(video_skip=True,video_intro=True,roi=[0,0,20,20],click_mode='fixed',click_point=[10,10],click_size=[720,1280])
+        records[-2]['video_intro_end']=True
+        app=App.__new__(App);app.stop=threading.Event();app.stop.wait=Mock(return_value=False)
+        app.emit=Mock();app.registry=Mock();app.registry.resolve.side_effect=lambda p:p
+        adb=Mock();adb.app_running.return_value=True
+        states=iter(['vs']*2+['menu']*9+['goal']*6);current={'key':''}
+        png=cv2.imencode('.png',np.zeros((1280,720,3),np.uint8))[1].tobytes()
+        def screenshot():
+            try:current['key']=next(states)
+            except StopIteration:raise RuntimeError('end of replay')
+            return png
+        adb.screenshot.side_effect=screenshot
+        def factory(path,*args,**kwargs):
+            m=Mock();m.find.side_effect=lambda image:(current['key']==str(path).removesuffix('.png'),(100,200),.99,(720,1280));return m
+        with tempfile.TemporaryDirectory() as folder,patch('app.ROOT',Path(folder)),patch('app.ADB',return_value=adb),\
+                patch('vision.Matcher',side_effect=factory),patch('app.time.monotonic',side_effect=itertools.count(0,.25)),\
+                patch('diagnostics.write_stop_snapshot'):
+            app.run_session(dict(buttons=records,recovery=recovery,dry=False,adb='adb',serial='device',league_start='goal',league_result='result'))
+        self.assertTrue(any('복구 탭' in c.args[0] and 'menu' in c.args[0] for c in app.emit.call_args_list),app.emit.call_args_list)
 
     def test_replay_text_ignores_background_and_rejects_flat_or_other_text(self):
         import tempfile
