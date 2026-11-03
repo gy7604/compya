@@ -110,6 +110,9 @@ class RankingMachine:
         if self.initial_sync and self.phase=='lobby' and found.get(result,False):
             self.hold=True
             if self.stable(result,found) and self.stable(confirm,found):
+                if type(self.config.get('resume_active_batch')) is int and self.config['resume_active_batch']==self.completed+1:
+                    self.completed+=1
+                    self.events.append('저장된 경기 시작 기록과 결과 화면 확인 · 중단 전 경기 집계 복원')
                 self.initial_sync=False;self.phase='result_confirm';self.counts={}
                 self.events.append('시작 시 기존 결과 화면 확인 · 확인 후 로비로 복귀 (이전 결과는 목표 횟수 집계 제외)')
             return None

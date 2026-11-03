@@ -407,7 +407,10 @@ class App:
             notifier=NotificationDetector(notification_config,cfg['buttons'])
             ranking_config=dict(cfg.get('ranking',default_ranking()))
             ranking_config['all_attempts']=bool(cfg.get('_daily'))
+            if cfg.get('_daily'):ranking_config['resume_active_batch']=cfg['_daily'].entry.get('active_batch')
             ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
+            from ranking_summary import RankingResultReader
+            result_reader=RankingResultReader(ROOT) if cfg.get('_daily') and cfg['schedule'].get('completion_notice') else None
             if cfg.get('_daily'):
                 ranking.completed=cfg['_daily'].entry['completed']
                 if ranking.reward and cfg['_daily'].entry.get('reward_pending'):
@@ -708,6 +711,7 @@ class App:
                 if recovery.restored:
                     transition_watch=TransitionWatch()
                     completed=ranking.completed;target_reached=ranking.target_reached;completion_reason=ranking.completion_reason
+                    if cfg.get('_daily'):ranking_config['resume_active_batch']=cfg['_daily'].entry.get('active_batch')
                     ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
                     ranking.completed=completed;ranking.target_reached=target_reached
                     ranking.completion_reason=completion_reason
@@ -790,6 +794,18 @@ class App:
                         price=cfg['schedule'].get(key)
                         if price:daily.price_frames[price]=daily.price_frames.get(price,0)+1 if results.get(price,(False,))[0] else 0
                     ranking_action=guard_action(daily,ranking,ranking_action,results,cfg['schedule'])
+                    if result_reader and ranking_action==ranking_config['confirm'] and daily.entry.get('result_pending'):
+                        batch=daily.entry['result_pending']
+                        record=result_reader.verify(png,adb,self.stop,matchers[ranking_config['result']],matchers[ranking_config['confirm']])
+                        if self.stop.is_set():break
+                        daily.result_record(batch,record)
+                        if record is None:
+                            result_reader.retain_unreadable(png,daily.day,batch)
+                            self.emit('랭킹 승무패 판독 불확실 · 결과 화면을 보존하고 전적 미집계로 표시 · 경기 계속')
+                        else:self.emit(f'랭킹 결과 기록 · {sum(record)}경기 · {record[0]}승 {record[1]}무 {record[2]}패')
+                        if not result_reader.confirm_visible(adb,self.stop,matchers[ranking_config['result']],matchers[ranking_config['confirm']]):
+                            ranking_action=None
+                            self.emit('랭킹 결과 판독 후 화면 변경 확인 · 이전 확인 좌표 클릭 없이 현재 화면 다시 확인')
                 while ranking.events:self.emit(ranking.events.pop(0))
                 if ranking.finished:
                     if cfg.get('_daily'):cfg['_ranking_done']=ranking.completion_reason or '오늘 허용된 도전 횟수 소진'

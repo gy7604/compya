@@ -25,12 +25,13 @@ def policy(now):
 def defaults():
     return dict(enabled=False, ranking_steps=[], points_limit=100, star_limit=100,
                 free_limit=100, exhausted='', points_price='', star_price='',ocr_prices=False,
-                one_off_star_date='')
+                one_off_star_date='',completion_notice=False)
 
 
 def validate(config, records, ranking, recovery):
     if type(config.get('enabled', False)) is not bool:
         raise ValueError('랭킹 일정 사용 설정을 확인하세요.')
+    if type(config.get('completion_notice',False)) is not bool:raise ValueError('랭킹 완료 알림 사용 여부를 확인하세요.')
     if not config.get('enabled'):return
     if type(config.get('ocr_prices',False)) is not bool:raise ValueError('변경 금액 인식 설정을 확인하세요.')
     override=config.get('one_off_star_date','')
@@ -168,13 +169,65 @@ class DailyRun:
 
     def completed(self, count):
         if self.entry['completed'] != count:
+            if count>self.entry['completed']:
+                self.entry['result_pending']=count
+                self.entry['active_batch']=None
             self.entry['completed'] = count
             self.save()
+
+    def start_batch(self):
+        batch=self.entry['completed']+1
+        if self.entry.get('active_batch')!=batch:
+            self.entry['active_batch']=batch;self.save()
+
+    def result_record(self,batch,record):
+        if batch!=self.entry.get('result_pending'):return False
+        results=self.entry.setdefault('results',{})
+        if record is not None:
+            if (not isinstance(record,(list,tuple)) or len(record)!=3 or any(type(n) is not int or n<0 for n in record)
+                    or not 1<=sum(record)<=5):raise ValueError('랭킹 승무패 기록을 확인하세요.')
+            results[str(batch)]=list(record);self.entry['result_pending']=None
+        else:results[str(batch)]=None
+        self.save();return True
 
     def finish(self, reason, blocked=False):
         self.entry['status'] = 'blocked' if blocked else 'done'
         self.entry['reason'] = reason
+        # Only newly completed runs create an outbox entry. Old done days do
+        # not produce a surprise retrospective notification after an upgrade.
+        if not blocked and self.config.get('completion_notice') and 'summary_notice' not in self.entry:
+            self.entry['summary_notice']={'state':'pending'}
         self.save()
+
+    def notify_pending(self,config,dry=False,emit=lambda text:None,sender=None):
+        if not self.config.get('completion_notice') or not config.get('enabled'):return
+        if not config.get('topic'):return
+        from ranking_summary import summary_text
+        from notifications import send_notification
+        if sender is None:sender=send_notification
+        for day,entry in sorted(self.data['days'].items()):
+            notice=entry.get('summary_notice',{})
+            if entry.get('status')!='done' or notice.get('state')!='pending':continue
+            if entry.get('pending') or entry.get('reward_pending'):continue
+            # Claim durably BEFORE the network call. A timeout/crash can have
+            # reached ntfy; never automatically send it twice.
+            notice.update(state='dry' if dry else 'sending',attempted_at=self.clock().isoformat())
+            try:self.save()
+            except OSError:
+                notice['state']='pending'
+                emit('랭킹 완료 알림 기록 저장 실패 · 실제 전송 없이 경기 계속');return
+            if dry:emit('모의 랭킹 완료 알림 · 실제 전송 안 함');continue
+            try:sender(config,summary_text(day,entry))
+            except Exception:
+                notice['state']='unknown'
+                try:self.save()
+                except OSError:pass  # Durable 'sending' still prevents a duplicate.
+                emit('랭킹 완료 알림 전송 결과 미확인 · 중복 방지를 위해 자동 재전송하지 않습니다.')
+            else:
+                notice['state']='sent'
+                try:self.save()
+                except OSError:emit('랭킹 완료 알림 전송 성공 · 전송 완료 기록 저장 대기')
+                else:emit('랭킹 완료 요약 알림 전송 성공')
 
 
 def league_session_visible(root,cfg,stop):
@@ -226,6 +279,7 @@ class ScheduledRunner:
         league = copy.deepcopy(self.cfg['recovery'])
         first_session=True
         while not self.app.stop.is_set():
+            self.daily.notify_pending(self.cfg.get('notifications',{}),dry=self.cfg['dry'],emit=self.app.emit)
             cfg = copy.deepcopy(self.cfg)
             ranking_mode = self.daily.due()
             if first_session and ranking_mode and not cfg['dry'] and league_session_visible(self.root,cfg,self.app.stop):
@@ -269,6 +323,7 @@ class ScheduledRunner:
             if ranking_mode:
                 reason = cfg.get('_ranking_done', '랭킹 실행 확인 필요')
                 self.daily.finish(reason, blocked=not bool(cfg.get('_ranking_done')))
+                self.daily.notify_pending(self.cfg.get('notifications',{}),dry=cfg['dry'],emit=self.app.emit)
                 self.app.emit('오늘 랭킹 처리 완료 · '+reason+' · 리그로 복귀')
             elif not cfg.get('_yielded'):
                 break
@@ -287,6 +342,7 @@ def guard_action(daily, machine, action, results, config):
     before=daily.entry['completed']
     completed_after_purchase=machine.completed>daily.entry.get('pending_completed',before)
     daily.completed(machine.completed)
+    if action and action==r['proceed']:daily.start_batch()
     # A stable active list or a completed later batch verifies the reserved
     # intent. Absence of a dialog alone is never payment success.
     if (daily.entry['pending'] and not found(r['refresh_dialog']) and

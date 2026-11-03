@@ -10,7 +10,10 @@ using Windows.Foundation;
 // Local Windows OCR only. No network, credentials, or system configuration.
 class PriceOCR {
     static int Main(string[] args) {
-        try { Run(args[0]); return 0; }
+        try {
+            Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+            Run(args[0],args.Length>1 ? args[1] : null); return 0;
+        }
         catch(Exception error) { Console.Error.WriteLine(error.Message); return 1; }
     }
     static T Wait<T>(IAsyncOperation<T> operation) {
@@ -23,9 +26,9 @@ class PriceOCR {
         if(info.Status!=AsyncStatus.Completed)throw new Exception("OCR operation failed: "+typeof(T).Name+" "+info.ErrorCode);
         return operation.GetResults();
     }
-    static void Run(string path) {
-        var engine=OcrEngine.TryCreateFromLanguage(new Language("en-US"));
-        if(engine==null)engine=OcrEngine.TryCreateFromUserProfileLanguages();
+    static void Run(string path,string language) {
+        var engine=OcrEngine.TryCreateFromLanguage(new Language(language ?? "en-US"));
+        if(engine==null && language==null)engine=OcrEngine.TryCreateFromUserProfileLanguages();
         if(engine==null)throw new Exception("OCR unavailable");
         var file=Wait(StorageFile.GetFileFromPathAsync(path));
         using(var stream=Wait(file.OpenAsync(FileAccessMode.Read))) {

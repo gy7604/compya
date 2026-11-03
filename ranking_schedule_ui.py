@@ -15,6 +15,8 @@ class ScheduleManager:
         ttk.Checkbutton(win, text='프로그램 내부 일정 사용', variable=enabled).pack(anchor='w',padx=12,pady=8)
         ocr=tk.BooleanVar(value=draft.get('ocr_prices',False))
         ttk.Checkbutton(win,text='변경되는 갱신 금액을 Windows 기본 글자 인식으로 확인',variable=ocr).pack(anchor='w',padx=12)
+        notice=tk.BooleanVar(value=draft.get('completion_notice',False))
+        ttk.Checkbutton(win,text='하루 완료 후 ntfy 요약 알림 · 총 경기/승무패 (휴대폰 알림 사용 필요)',variable=notice).pack(anchor='w',padx=12)
         ttk.Label(win, text='월~금 13:00부터 무료 갱신 → P포인트\n토·일 20:00부터 무료 갱신 → P포인트 → 별\n늦게 켜면 즉시 시작 · 실행 중이면 리그 결과 확인 후 전환\n오늘 완료 상태와 결제 대기 기록은 재시작 후에도 보존합니다.').pack(anchor='w',padx=12,pady=6)
         ttk.Label(win, text='시작을 누른 채 프로그램과 PC를 켜 두어야 합니다.\n금액 미확인·구매 결과 미확인·하루 한도 도달 시 추가 구매를 보류합니다.\n글자 인식을 사용하면 금액이 바뀌어도 3개 화면에서 두 방식의 판독이 모두 일치해야 구매합니다.').pack(anchor='w',padx=12)
         records = {r['id']:r for r in app.records}
@@ -49,7 +51,7 @@ class ScheduleManager:
         ttk.Label(win,text='이미지 방식은 재화와 숫자 금액을 함께 등록하세요.\n글자 인식 방식은 PriceOCR.exe와 숫자가 제외된 재화 아이콘 이미지가 필요합니다.\n별 재화가 확인되지 않으면 별 결제를 하지 않습니다. 설정 변경은 중지 후 가능합니다.').pack(anchor='w',padx=12,pady=8)
         def save():
             try:
-                draft.update(enabled=enabled.get(),ranking_steps=ids,ocr_prices=ocr.get())
+                draft.update(enabled=enabled.get(),ranking_steps=ids,ocr_prices=ocr.get(),completion_notice=notice.get())
                 for key,value in fields.items():draft[key]=next((r['id'] for r in app.records if r['name']==value.get()),'')
                 for key,value in limits.items():draft[key+'_limit']=int(value.get())
                 validate(draft,app.records,app.ranking,app.recovery)
