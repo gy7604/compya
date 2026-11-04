@@ -5,6 +5,8 @@ import SW from './public/sw.js.txt';
 import MANIFEST from './public/manifest.webmanifest';
 import ICON192 from './public/icon-192.png';
 import ICON512 from './public/icon-512.png';
+import {observeRecords,observeHealth,offlineEvent,OFFLINE_AFTER} from './monitor.mjs';
+import {validateSubscription,sendPush} from './push.mjs';
 import {AGE, SESSION_AGE, SHORT_SESSION_AGE, hash, equal, session, authorized, sameOrigin, body, cleanStatus, command} from './protocol.mjs';
 
 const json = (value, status = 200, headers = {}) => Response.json(value, {status, headers});
@@ -49,6 +51,54 @@ export default {
 export class ControlRoom {
   constructor(ctx, env) {
     this.ctx = ctx; this.env = env; this.last = 0; this.status = null; this.boot = null; this.viewing = 0; this.screen = null;
+    this.delivering=false;
+  }
+  async appendNotices(events,observed,health) {
+    await this.ctx.storage.transaction(async tx=>{
+      const notices=await tx.get('notices') || [], subscriptions=await tx.get('subscriptions') || {};
+      for (const event of events) {
+        if (!notices.some(item=>item.id===event.id)) notices.push({...event,deliveries:Object.fromEntries(Object.keys(subscriptions).map(id=>[id,'pending']))});
+      }
+      if (events.length) await tx.put('notices',notices.slice(-64));
+      if (observed) await tx.put('observed',observed);
+      if (health) await tx.put('health',health);
+    });
+    if (events.length) this.ctx.waitUntil(this.deliver());
+  }
+  async deliveryState(eventId,id,value,claim=false) {
+    return this.ctx.storage.transaction(async tx=>{
+      const notices=await tx.get('notices') || [], notice=notices.find(item=>item.id===eventId);
+      if (!notice || (claim && notice.deliveries[id]!=='pending')) return false;
+      notice.deliveries[id]=value;await tx.put('notices',notices);return true;
+    });
+  }
+  async deliver() {
+    if (this.delivering) return;
+    this.delivering=true;
+    try {
+      const store=this.ctx.storage, notices=await store.get('notices') || [];
+      for (const notice of notices) for (const [id,state] of Object.entries(notice.deliveries || {})) {
+        if (state!=='pending') continue;
+        const subscriptions=await store.get('subscriptions') || {}, subscription=subscriptions[id];
+        if (!subscription) {await this.deliveryState(notice.id,id,'removed');continue;}
+        if (!await this.deliveryState(notice.id,id,'sending',true)) continue;
+        let outcome='unknown';
+        try {
+          const status=await sendPush(subscription,notice,this.env);
+          outcome=status>=200 && status<300?'accepted':status===404 || status===410?'expired':'failed';
+          if (status===404 || status===410) await store.transaction(async tx=>{const current=await tx.get('subscriptions') || {};delete current[id];await tx.put('subscriptions',current);});
+        } catch {}
+        await this.deliveryState(notice.id,id,outcome);
+      }
+    } finally {this.delivering=false;}
+    const current=await this.ctx.storage.get('notices') || [];
+    if (current.some(item=>Object.values(item.deliveries || {}).includes('pending'))) this.ctx.waitUntil(this.deliver());
+  }
+  async alarm() {return this.ctx.blockConcurrencyWhile(()=>this.handleAlarm());}
+  async handleAlarm() {
+    const store=this.ctx.storage, health=await store.get('health'), event=offlineEvent(health,Date.now());
+    if (event) {health.notified=true;await this.appendNotices([event],null,health);}
+    else if (health?.watch && !health.notified) await store.setAlarm(health.last+OFFLINE_AFTER);
   }
   async fetch(request) {
     return this.ctx.blockConcurrencyWhile(async () => this.handle(request));
@@ -74,11 +124,19 @@ export class ControlRoom {
       if (this.boot && this.boot !== data.boot_id && now - this.last < AGE) return json({error: 'Another PC instance is connected'}, 409);
       const status = cleanStatus(data.status);
       this.boot = data.boot_id; this.status = status; this.last = now;
+      const health=observeHealth(await store.get('health'),status,data.boot_id,now);
+      health.collection_quality=data.telemetry?.quality === true;
+      await store.put('health',health);
+      if (health.watch) await store.setAlarm(now+OFFLINE_AFTER);else await store.deleteAlarm();
+      const oldObserved=await store.get('observed'), observed=observeRecords(oldObserved,data.telemetry,now);
+      await this.appendNotices(observed.events,data.telemetry && JSON.stringify(oldObserved)!==JSON.stringify(observed.state) ? observed.state : null);
+      if (status.closing) this.boot=null;
       if (typeof data.screen === 'string' && data.screen.length < 240_000 && data.screen.startsWith('/9j/') &&
           Number.isFinite(data.screen_at) && Math.abs(now - data.screen_at * 1000) < 15_000) {
         this.screen = {bytes: data.screen, at: data.screen_at * 1000};
       }
       const queue = await store.get('commands') || [];
+      const oldQueue=JSON.stringify(queue);
       for (const receipt of Array.isArray(data.acks) ? data.acks.slice(-32) : []) {
         const item = queue.find(value => value.id === receipt.id && value.boot_id === data.boot_id);
         if (item && ['done', 'rejected', 'unknown'].includes(receipt.state) && ['queued', 'delivered'].includes(item.state)) {
@@ -90,7 +148,7 @@ export class ControlRoom {
       }
       const pending = queue.find(item => ['queued', 'delivered'].includes(item.state));
       if (pending) pending.state = 'delivered';
-      if (queue.length) await store.put('commands', queue.slice(-64));
+      if (JSON.stringify(queue)!==oldQueue) await store.put('commands', queue.slice(-64));
       return json({viewing: this.viewing > now, command: pending || null});
     }
     if (path === '/api/status' && request.method === 'GET') {
@@ -100,8 +158,39 @@ export class ControlRoom {
         lastCommand.state = 'expired'; lastCommand.message = '전달 시간이 지났습니다. 현재 상태를 확인하세요.';
         await store.put('commands', items);
       }
-      return json({online: now - this.last < AGE, updated_at: this.last || null, status: this.status,
+      return json({online: now - this.last < AGE && !this.status?.closing, updated_at: this.last || null, status: this.status,
         screen_at: this.screen && now - this.screen.at < AGE ? this.screen.at : null, command: lastCommand || null});
+    }
+    if (path === '/api/push/config' && request.method === 'GET') {
+      const subscriptions=await store.get('subscriptions') || {};
+      return json({configured:!!(this.env.VAPID_PUBLIC_KEY && this.env.VAPID_PRIVATE_KEY),publicKey:this.env.VAPID_PUBLIC_KEY || '',devices:Object.keys(subscriptions).length});
+    }
+    if (path === '/api/push/subscribe' && request.method === 'POST') {
+      if (!this.env.VAPID_PUBLIC_KEY || !this.env.VAPID_PRIVATE_KEY) return json({error:'푸시 연결 준비 중입니다.'},503);
+      const subscription=validateSubscription(await body(request));const id=await hash(subscription.endpoint), subscriptions=await store.get('subscriptions') || {};
+      if (!subscriptions[id] && Object.keys(subscriptions).length>=3) return json({error:'휴대폰은 최대3개까지 연결할 수 있습니다.'},409);
+      subscriptions[id]=subscription;await store.put('subscriptions',subscriptions);return json({ok:true});
+    }
+    if (path === '/api/push/check' && request.method === 'POST') {
+      const data=await body(request), subscriptions=await store.get('subscriptions') || {};
+      return json({registered:typeof data.endpoint==='string' && !!subscriptions[await hash(data.endpoint)]});
+    }
+    if (path === '/api/push/unsubscribe' && request.method === 'POST') {
+      const data=await body(request), subscriptions=await store.get('subscriptions') || {};
+      if (typeof data.endpoint==='string') delete subscriptions[await hash(data.endpoint)];
+      await store.put('subscriptions',subscriptions);return json({ok:true});
+    }
+    if (path === '/api/push/test' && request.method === 'POST') {
+      const last=await store.get('last-test') || 0;
+      if (now-last<60_000) return json({error:'테스트 알림은1분 뒤 다시 보낼 수 있습니다.'},429);
+      const subscriptions=await store.get('subscriptions') || {};
+      if (!Object.keys(subscriptions).length) return json({error:'이 휴대폰에서 알림을 먼저 켜세요.'},409);
+      await store.put('last-test',now);await this.appendNotices([{id:'test:'+crypto.randomUUID(),type:'test',title:'컴프야 알림 연결 확인',body:'이 알림을 받았다면 PWA 푸시가 연결되었습니다.',at:new Date(now).toISOString()}]);
+      return json({ok:true,message:'테스트 알림을 푸시 서버에 전송합니다. 실제 휴대폰 수신을 확인하세요.'});
+    }
+    if (path === '/api/notifications' && request.method === 'GET') {
+      const notices=await store.get('notices') || [], observed=await store.get('observed'), health=await store.get('health');
+      return json({collecting:observed?.ready===true,last_received_at:health?.last || null,quality:health?.collection_quality===true,items:notices.slice(-20).reverse().map(({id,type,title,body,at,deliveries})=>({id,type,title,body,at,push:Object.values(deliveries || {}).includes('accepted')?'accepted':Object.keys(deliveries || {}).length?'unconfirmed':'no-device'}))});
     }
     if (path === '/api/screen' && request.method === 'GET') {
       this.viewing = now + AGE;

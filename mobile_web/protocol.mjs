@@ -42,7 +42,7 @@ export function cleanStatus(value) {
   if (!value || typeof value !== 'object') throw new Error('Invalid status');
   const result = {};
   for (const key of ['version', 'mode', 'status', 'league_count', 'season', 'timing', 'blocked']) result[key] = String(value[key] || '').slice(0, 240);
-  for (const key of ['running', 'stopping', 'can_start', 'dry', 'startup_ready', 'reboot_pending']) result[key] = value[key] === true;
+  for (const key of ['running', 'stopping', 'can_start', 'dry', 'startup_ready', 'reboot_pending', 'closing']) result[key] = value[key] === true;
   return result;
 }
 export function command(data, current, boot, now) {

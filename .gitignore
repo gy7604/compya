@@ -38,6 +38,10 @@ mobile_control.tmp
 mobile_commands.tmp
 startup_restore.json
 startup_restore.tmp
+mobile_telemetry.json
+mobile_telemetry.tmp
+mobile_facts.json
+mobile_facts.tmp
 mobile_web/.dev.vars*
 mobile_web/.wrangler/
 .wrangler/

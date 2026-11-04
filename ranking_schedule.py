@@ -191,6 +191,7 @@ class DailyRun:
         self.save();return True
 
     def finish(self, reason, blocked=False):
+        self.entry['finished_at']=self.clock().isoformat()
         self.entry['status'] = 'blocked' if blocked else 'done'
         self.entry['reason'] = reason
         # Only newly completed runs create an outbox entry. Old done days do

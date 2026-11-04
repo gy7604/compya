@@ -1,6 +1,7 @@
 """Read the regular-season ROUND and keep it separate from session totals."""
 import json
 import re
+import uuid
 import subprocess
 import tempfile
 from datetime import datetime,timezone
@@ -16,7 +17,7 @@ class SeasonProgress:
 
     def __init__(self,root,dry=False):
         self.path=Path(root)/('league_season_dry.json' if dry else 'league_season.json')
-        self.data=None;self.verified=False;self.candidate=None;self.frames=0;self.persisted=True
+        self.data=None;self.verified=False;self.candidate=None;self.frames=0;self.persisted=True;self.dry=dry
         try:
             data=json.loads(self.path.read_text(encoding='utf-8'))
             round_,completed=data['round'],data['completed']
@@ -41,7 +42,9 @@ class SeasonProgress:
         if self.frames<2:return False
         # Repeated lobby frames must not erase a result or manufacture a new game.
         if self.verified and self.data and self.data['round']==round_:return False
-        self.data=dict(round=round_,completed=round_-1,phase='lobby')
+        identity=(self.data or {}).get('season_id')
+        if not identity or (round_==1 and (self.data or {}).get('completed',0)>0):identity=str(uuid.uuid4())
+        self.data=dict(round=round_,completed=round_-1,phase='lobby',season_id=identity)
         self.verified=True;self.save();return True
 
     def playing(self):
@@ -56,13 +59,17 @@ class SeasonProgress:
 
     def new_season(self):
         if self.verified and self.data and self.data['round']==1 and self.data['phase']=='lobby':return False
-        self.data=dict(round=1,completed=0,phase='lobby')
+        self.data=dict(round=1,completed=0,phase='lobby',season_id=str(uuid.uuid4()))
         self.verified=True;self.candidate=None;self.frames=0
         self.save();return True
 
     def result(self):
         if not self.verified or not self.data or self.data['phase']!='playing':return False
-        self.data.update(completed=self.data['round'],phase='completed');self.save();return True
+        self.data.update(completed=self.data['round'],phase='completed');self.save()
+        if not self.dry and self.persisted and self.data['completed']==144:
+            from mobile_records import record_season
+            record_season(self.path.parent,self.data)
+        return True
 
     def text(self,ranking=False):
         if not self.data:return '리그 시즌 · 현재 진행 확인 대기 (정규시즌 144경기)'

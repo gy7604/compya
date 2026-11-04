@@ -108,6 +108,8 @@ class MobileAgent:
         self.config=config;self.dispatch=dispatch;self.capture=capture;self.notify=notify
         self.journal=CommandJournal(root);self.boot_id=str(uuid.uuid4());self.shutdown=threading.Event();self.lock=threading.Lock()
         self.summary={};self.png=None;self.screen_at=0;self.last_screen=0;self.connected=None
+        from mobile_records import RecordReader
+        self.reader=RecordReader(root)
         if opener is None:
             class NoRedirect(urllib.request.HTTPRedirectHandler):
                 def redirect_request(self,*args,**kwargs):return None
@@ -127,7 +129,7 @@ class MobileAgent:
     def payload(self,want_screen=False):
         now=time.time()
         with self.lock:summary=dict(self.summary);png=self.png;captured=self.screen_at
-        data=dict(boot_id=self.boot_id,status=summary,acks=self.journal.receipts())
+        data=dict(boot_id=self.boot_id,status=summary,acks=self.journal.receipts(),telemetry=self.reader.snapshot())
         if want_screen and now-self.last_screen>=5:
             if not summary.get('running'):
                 png=self.capture();captured=time.time() if png else 0
@@ -165,3 +167,8 @@ class MobileAgent:
                 if self.connected is not False:self.notify('모바일 연결 대기 · 매크로는 계속 실행됩니다.')
                 self.connected=False;want_screen=False
             self.shutdown.wait(3 if want_screen else 10)
+        # A deliberate program exit/connection disable should not look like a crash.
+        try:
+            data=self.payload(False);data['status'].update(closing=True,running=False,stopping=True)
+            self.exchange(data)
+        except Exception:pass

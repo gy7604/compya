@@ -55,6 +55,8 @@ class App:
         self.mobile=None;self.mobile_manager=None;self.mobile_root=ROOT
         from startup_restore import ResumeStore
         self.resume_store=ResumeStore(ROOT)
+        from mobile_records import RunTelemetry
+        self.telemetry=RunTelemetry(ROOT)
         self.reboot_pending=False;self.pc_rebooter=None
         self.mobile_capture_config={};self.mobile_mode='리그';self.mobile_publish_at=0
         self.fields = {}
@@ -358,6 +360,7 @@ class App:
         except Exception:self.emit('모바일 연결 정보 확인 필요 · 매크로는 계속 사용할 수 있습니다.')
 
     def request_stop(self):
+        if getattr(self,'telemetry',None):self.telemetry.expected('manual')
         if getattr(self,'resume_store',None):
             try:self.resume_store.update(desired_running=False)
             except OSError:self.emit('자동 재개 기록 저장 실패 · PC에서 연결 설정을 확인하세요.')
@@ -412,6 +415,7 @@ class App:
         running=bool(self.worker and self.worker.is_alive())
         self.resume_store.update(desired_running=running,confirmed=self.confirm.get(),dry=self.dry.get(),serial=self.fields['serial'].get())
         self.reboot_pending=True;self.stop.set()
+        if getattr(self,'telemetry',None):self.telemetry.expected('planned_reboot')
         self.pc_rebooter=RebootTimer(lambda ok:self.events.put(('reboot_result',ok)))
         self.pc_rebooter.start()
         self.emit('휴대폰 요청 · PC 재부팅 20초 예약 · Windows 로그인 후 연결 복원')
@@ -471,6 +475,7 @@ class App:
             if not remote:messagebox.showerror('설정 확인', str(e))
             return False,'설정을 확인하세요. '+str(e)[:120]
         self.stop.clear()
+        if getattr(self,'telemetry',None):self.telemetry.begin(config['dry'])
         self.start_button.configure(state='disabled')
         self.worker = threading.Thread(target=self.run, args=(config,), daemon=True)
         self.worker.start()
@@ -481,9 +486,11 @@ class App:
             if not cfg.get('schedule',{}).get('enabled'):return self.run_session(cfg)
             ScheduledRunner(self,cfg,ROOT).run()
         except Exception as error:
+            if getattr(self,'telemetry',None):self.telemetry.failure('macro_error')
             self.emit(f'일정 실행 중지 · {error}')
         finally:
             self.stop.set()
+            if getattr(self,'telemetry',None):self.telemetry.finish()
             if getattr(self,'resume_store',None) and not self.reboot_pending:
                 try:self.resume_store.update(desired_running=False)
                 except OSError:self.emit('자동 재개 종료 기록 저장 실패 · PC에서 설정 확인 필요')
@@ -1077,6 +1084,8 @@ class App:
                 self.stop.wait(interval)
         except Exception as e:
             cfg['_failed']=True
+            if getattr(self,'telemetry',None):
+                self.telemetry.failure('player_error' if recovery and recovery.active and recovery.launches>=recovery.config['max_launches'] else 'macro_error')
             self.emit(f'안전 중지 · {e}')
             if (recovery is not None and recovery.active and recovery.config['enabled']
                     and recovery.launches>=recovery.config['max_launches']
@@ -1192,7 +1201,7 @@ class App:
             self.start_button.configure(state='normal')
         if time.monotonic()-self.mobile_publish_at>=1:
             self.mobile_publish_at=time.monotonic();self.mobile_snapshot()
-        if self.closing and not running:
+        if self.closing and not running and not (self.mobile and self.mobile.thread.is_alive()):
             self.root.destroy()
             return
         self.root.after(100, self.poll)
@@ -1202,6 +1211,7 @@ class App:
             messagebox.showinfo('업데이트 중', '다운로드가 끝날 때까지 기다려 주세요. 실패 시 기존 프로그램을 계속 사용할 수 있습니다.')
             return
         self.closing = True
+        if getattr(self,'telemetry',None):self.telemetry.expected('closed')
         if self.reboot_pending:self.cancel_mobile_reboot()
         if self.mobile:self.mobile.close()
         self.request_stop()

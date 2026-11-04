@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'compya-shell-2.0.20';
+const CACHE = 'compya-shell-2.0.21';
 const SHELL = ['/', '/panel.css', '/panel.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('compya-shell-') && key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
@@ -9,4 +9,19 @@ self.addEventListener('fetch', event => {
   // never enter the offline cache or a background retry queue.
   if (event.request.method !== 'GET' || url.origin !== self.location.origin || url.search || !SHELL.includes(url.pathname)) return;
   event.respondWith(fetch(event.request).catch(() => caches.match(url.pathname).then(response => response || Response.error())));
+});
+self.addEventListener('push', event => {
+  let message={title:'컴프야 상태 알림',body:'현재 상태를 확인하세요.'};
+  try {const data=event.data?.json();if(data && typeof data==='object')message=data;} catch {}
+  event.waitUntil(self.registration.showNotification(String(message.title || '컴프야 상태 알림').slice(0,80),{
+    body:String(message.body || '').slice(0,350),tag:String(message.tag || 'compya').slice(0,80),icon:'/icon-192.png',badge:'/icon-192.png',data:{url:'/'},renotify:false
+  }));
+});
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(async clients=>{
+    const client=clients.find(value=>new URL(value.url).origin===self.location.origin);
+    if (client) {await client.navigate('/');return client.focus();}
+    return self.clients.openWindow('/');
+  }));
 });

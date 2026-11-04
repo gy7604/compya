@@ -1,7 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {hash, session, authorized, command} from '../protocol.mjs';
+import webpush from 'web-push';
+import {createECDH,randomBytes} from 'node:crypto';
 
 let source = await readFile(new URL('../worker.mjs', import.meta.url), 'utf8');
 for (const [name, path] of [['PAGE','index.html'], ['STYLE','panel.css'], ['SCRIPT','panel.js.txt'], ['SW','sw.js.txt'], ['MANIFEST','manifest.webmanifest']]) {
@@ -13,12 +15,19 @@ for (const [name, path] of [['ICON192','icon-192.png'], ['ICON512','icon-512.png
   source = source.replace(new RegExp(`import ${name} from '[^']+';`), `const ${name} = new Uint8Array(${JSON.stringify([...bytes])}).buffer;`);
 }
 source = source.replace("'./protocol.mjs'", JSON.stringify(new URL('../protocol.mjs', import.meta.url).href));
-const {default: worker, ControlRoom} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+for (const file of ['monitor.mjs','push.mjs']) source=source.replace(`'./${file}'`,JSON.stringify(new URL('../'+file,import.meta.url).href));
+await mkdir(new URL('../.wrangler/',import.meta.url),{recursive:true});
+const generated=new URL('../.wrangler/control-fixture.mjs',import.meta.url);await writeFile(generated,source);
+const {default: worker, ControlRoom} = await import(generated.href);
 const root = 'https://compya-mobile-control.example.workers.dev';
 async function fixture() {
   const owner = 'owner'.padEnd(40, 'x'), agent = 'agent'.padEnd(40, 'y'), data = new Map();
   const env = {OWNER_KEY_HASH: await hash(owner), AGENT_KEY_HASH: await hash(agent), SESSION_KEY: 'session'.repeat(8)};
   const ctx = {blockConcurrencyWhile: fn => fn(), storage: {get: async key => structuredClone(data.get(key)), put: async (key, value) => data.set(key, structuredClone(value)), delete: async key => data.delete(key)}};
+  let transactions=Promise.resolve();const pending=[];
+  ctx.storage.transaction=fn=>{const result=transactions.then(()=>fn(ctx.storage));transactions=result.catch(()=>{});return result;};
+  ctx.storage.setAlarm=async at=>data.set('alarm',at);ctx.storage.deleteAlarm=async()=>data.delete('alarm');ctx.waitUntil=value=>pending.push(value);
+  const flush=async()=>{while(pending.length)await Promise.all(pending.splice(0));};
   const room = new ControlRoom(ctx, env); env.CONTROL = {idFromName: name => name, get: () => room};
   const req = (path, body, headers = {}, method) => worker.fetch(new Request(root + path, {method: method || (body === undefined ? 'GET' : 'POST'),
     headers: {'Content-Type': 'application/json', Origin: root, ...headers}, body: body === undefined ? undefined : JSON.stringify(body)}), env);
@@ -26,7 +35,7 @@ async function fixture() {
   const boot = crypto.randomUUID(), status = {running: false, can_start: true, mode: '리그', status: '대기', secret: 'never expose'};
   const sync = (extra = {}, key = agent) => req('/api/agent/sync', {boot_id: boot, status, ...extra}, {Authorization: 'Bearer ' + key});
   const browser = (path, body, headers = {}, method) => req(path, body, {Cookie: cookie, ...headers}, method);
-  return {req, browser, sync, owner, agent, env, data, boot, room, cookie};
+  return {req, browser, sync, owner, agent, env, data, boot, room, cookie, flush};
 }
 
 test('unauthenticated clients cannot view status, game images, or issue commands', async () => {
@@ -66,7 +75,7 @@ test('PWA manifest, fresh service worker and PNG icons are served with restricti
     const image=await f.req(`/icon-${size}.png`);assert.equal(image.headers.get('Content-Type'),'image/png');
     const raw=new DataView(await image.arrayBuffer());assert.equal(raw.getUint32(16),size);assert.equal(raw.getUint32(20),size);
   }
-  const sw=await f.req('/sw.js');assert.equal(sw.headers.get('Cache-Control'),'no-store');assert.match(await sw.text(),/compya-shell-2.0.20/);
+  const sw=await f.req('/sw.js');assert.equal(sw.headers.get('Cache-Control'),'no-store');assert.match(await sw.text(),/compya-shell-2.0.21/);
   assert.match((await f.req('/')).headers.get('Content-Security-Policy'),/worker-src 'self'; manifest-src 'self'/);
 });
 test('reboot requires a one-use, current-boot challenge and typed confirmation', async () => {
@@ -121,4 +130,58 @@ test('malformed and oversized messages fail closed', async () => {
   assert.equal((await f.req('/api/login',{key:'x'.repeat(5000)})).status,400);
   assert.equal((await f.sync({screen:'x'.repeat(270000)})).status,400);
   delete f.env.SESSION_KEY;assert.equal((await f.req('/api/status')).status,503);
+});
+
+function pushSetup(f) {
+  const vapid=webpush.generateVAPIDKeys(), pair=createECDH('prime256v1');pair.generateKeys();
+  f.env.VAPID_PUBLIC_KEY=vapid.publicKey;f.env.VAPID_PRIVATE_KEY=vapid.privateKey;
+  return {endpoint:'https://fcm.googleapis.com/fcm/send/test-device',keys:{p256dh:pair.getPublicKey().toString('base64url'),auth:randomBytes(16).toString('base64url')}};
+}
+const records=()=>({schema:1,quality:true,faults:[],ranking:[],seasons:[]});
+test('subscription and history are owner-only; endpoints and encryption keys never enter history',async t=>{
+  const f=await fixture(), subscription=pushSetup(f);
+  assert.equal((await f.req('/api/push/subscribe',subscription)).status,401);
+  assert.equal((await f.req('/api/notifications')).status,401);
+  assert.equal((await f.browser('/api/push/subscribe',subscription)).status,200);
+  assert.equal((await (await f.browser('/api/push/check',{endpoint:subscription.endpoint})).json()).registered,true);
+  t.mock.method(globalThis,'fetch',async()=>new Response(null,{status:201}));
+  assert.equal((await f.browser('/api/push/test',{})).status,200);await f.flush();
+  const history=await (await f.browser('/api/notifications')).text();assert.ok(!history.includes(subscription.endpoint));assert.ok(!history.includes(subscription.keys.auth));assert.match(history,/accepted/);
+  assert.equal((await f.browser('/api/push/test',{})).status,429);
+  await f.browser('/api/push/unsubscribe',{endpoint:subscription.endpoint});assert.equal((await (await f.browser('/api/push/config')).json()).devices,0);
+});
+test('server collects records and queues one encrypted push even when phone page is never opened',async t=>{
+  const f=await fixture(), subscription=pushSetup(f);await f.browser('/api/push/subscribe',subscription);
+  let calls=0;t.mock.method(globalThis,'fetch',async()=>{calls++;return new Response(null,{status:201});});
+  const telemetry=records();await f.sync({status:{running:true},telemetry});
+  telemetry.seasons.push({id:'verified-season',completed:144,at:new Date().toISOString()});
+  await f.sync({status:{running:true},telemetry});await f.flush();
+  assert.equal(calls,1);assert.equal(f.data.get('notices')[0].type,'league_done');
+  await f.sync({status:{running:true},telemetry});await f.flush();assert.equal(calls,1);
+});
+test('concurrent event collection cannot lose notices while another push is in flight',async t=>{
+  const f=await fixture(), subscription=pushSetup(f);await f.browser('/api/push/subscribe',subscription);
+  let release, calls=0;const gate=new Promise(resolve=>release=resolve);
+  t.mock.method(globalThis,'fetch',async()=>{calls++;if(calls===1)await gate;return new Response(null,{status:201});});
+  const telemetry=records();telemetry.faults.push({id:'run-a',kind:'macro_error',at:new Date().toISOString()});await f.sync({telemetry});
+  for(let i=0;!calls && i<100;i++)await new Promise(resolve=>setTimeout(resolve,1));
+  assert.ok(calls,'Push request did not reach the provider stub');
+  telemetry.faults.push({id:'run-b',kind:'player_error',at:new Date().toISOString()});await f.sync({telemetry});release();await f.flush();
+  assert.equal(calls,2);assert.equal(f.data.get('notices').length,2);
+  assert.ok(f.data.get('notices').every(notice=>Object.values(notice.deliveries).includes('accepted')));
+});
+test('a timed-out push is not automatically duplicated; expired subscriptions are removed',async t=>{
+  const f=await fixture(), subscription=pushSetup(f);await f.browser('/api/push/subscribe',subscription);
+  let calls=0;const mock=t.mock.method(globalThis,'fetch',async()=>{calls++;throw new Error('ambiguous network timeout');});
+  const telemetry=records();telemetry.faults.push({id:'run-one',kind:'macro_error',at:new Date().toISOString()});await f.sync({telemetry});await f.flush();
+  await f.sync({telemetry});await f.flush();assert.equal(calls,1);assert.ok(Object.values(f.data.get('notices')[0].deliveries).includes('unknown'));
+  mock.mock.mockImplementation(async()=>new Response(null,{status:410}));
+  telemetry.faults.push({id:'run-two',kind:'macro_error',at:new Date().toISOString()});await f.sync({telemetry});await f.flush();assert.equal(Object.keys(f.data.get('subscriptions')).length,0);
+});
+test('durable alarm detects lost PC once, while intentional closure suppresses it',async()=>{
+  const f=await fixture();await f.sync({status:{running:true}});
+  const health=f.data.get('health');health.last=Date.now()-121000;f.data.set('health',health);
+  await f.room.alarm();await f.flush();assert.equal(f.data.get('notices')[0].type,'offline');
+  await f.room.alarm();await f.flush();assert.equal(f.data.get('notices').length,1);
+  await f.sync({status:{running:false,closing:true}});assert.equal(f.data.get('health').watch,false);assert.equal(f.data.has('alarm'),false);
 });
