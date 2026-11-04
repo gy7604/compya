@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {observeRecords,observeHealth,offlineEvent,OFFLINE_AFTER} from '../monitor.mjs';
-import {pushRequest,validateSubscription,sendPush} from '../push.mjs';
+import {pushRequest,validateSubscription,sendPush,deliverySummary} from '../push.mjs';
 import {createECDH,randomBytes} from 'node:crypto';
 import webpush from 'web-push';
 import ece from 'http_ece';
@@ -52,6 +52,23 @@ test('real web-push encryption decrypts with browser key, VAPID is attached, and
   const env={VAPID_PUBLIC_KEY:vapid.publicKey,VAPID_PRIVATE_KEY:vapid.privateKey}, event={id:'event-1',type:'macro_error',title:'매크로 확인 필요',body:'테스트 기록',at};
   const request=await pushRequest(subscription,event,env);assert.equal(request.headers['Content-Encoding'],'aes128gcm');assert.match(request.headers.Authorization,/vapid/);
   const decoded=JSON.parse(ece.decrypt(request.body,{version:'aes128gcm',privateKey:pair,authSecret:auth}).toString());assert.equal(decoded.body,event.body);assert.equal(decoded.url,'/');
-  let count=0;const status=await sendPush(subscription,event,env,async(url,options)=>{count++;assert.equal(options.redirect,'error');assert.ok(options.signal);return new Response(null,{status:201});});
+  let count=0;const status=await sendPush(subscription,event,env,async(url,options)=>{count++;assert.equal(options.redirect,'manual');assert.ok(options.signal);return new Response(null,{status:201});});
   assert.equal(status,201);assert.equal(count,1);
+});
+
+test('redirect responses remain failures without forwarding encrypted payloads to another host',async()=>{
+  const pair=createECDH('prime256v1');pair.generateKeys();const vapid=webpush.generateVAPIDKeys();
+  const subscription={endpoint:'https://fcm.googleapis.com/fcm/send/synthetic-test',keys:{p256dh:pair.getPublicKey().toString('base64url'),auth:randomBytes(16).toString('base64url')}};
+  let calls=0;
+  const status=await sendPush(subscription,{id:'redirect',type:'test',title:'test',body:'test'},{VAPID_PUBLIC_KEY:vapid.publicKey,VAPID_PRIVATE_KEY:vapid.privateKey},async(url,options)=>{
+    calls++;assert.equal(options.redirect,'manual');return new Response(null,{status:307,headers:{Location:'https://example.invalid/steal'}});
+  });
+  assert.equal(status,307);assert.equal(calls,1);
+});
+
+test('notification diagnostics distinguish provider rejection, stale device, and ambiguous transport without secrets',()=>{
+  assert.match(deliverySummary({deliveries:{device:'failed'},delivery_details:{device:{status:403}}}).push_message,/HTTP 403/);
+  assert.match(deliverySummary({deliveries:{device:'expired'}}).push_message,/만료/);
+  assert.match(deliverySummary({deliveries:{device:'unknown'},delivery_details:{device:{reason:'timeout'}}}).push_message,/자동 재전송하지 않습니다/);
+  assert.equal(deliverySummary({deliveries:{device:'accepted'}}).push,'accepted');
 });

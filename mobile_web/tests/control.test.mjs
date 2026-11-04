@@ -75,7 +75,7 @@ test('PWA manifest, fresh service worker and PNG icons are served with restricti
     const image=await f.req(`/icon-${size}.png`);assert.equal(image.headers.get('Content-Type'),'image/png');
     const raw=new DataView(await image.arrayBuffer());assert.equal(raw.getUint32(16),size);assert.equal(raw.getUint32(20),size);
   }
-  const sw=await f.req('/sw.js');assert.equal(sw.headers.get('Cache-Control'),'no-store');assert.match(await sw.text(),/compya-shell-2.0.21/);
+  const sw=await f.req('/sw.js');assert.equal(sw.headers.get('Cache-Control'),'no-store');assert.match(await sw.text(),/compya-shell-2.0.22/);
   assert.match((await f.req('/')).headers.get('Content-Security-Policy'),/worker-src 'self'; manifest-src 'self'/);
 });
 test('reboot requires a one-use, current-boot challenge and typed confirmation', async () => {
@@ -184,4 +184,13 @@ test('durable alarm detects lost PC once, while intentional closure suppresses i
   await f.room.alarm();await f.flush();assert.equal(f.data.get('notices')[0].type,'offline');
   await f.room.alarm();await f.flush();assert.equal(f.data.get('notices').length,1);
   await f.sync({status:{running:false,closing:true}});assert.equal(f.data.get('health').watch,false);assert.equal(f.data.has('alarm'),false);
+});
+
+test('provider rejection is visible to the owner while private delivery metadata remains hidden',async t=>{
+  const f=await fixture(), subscription=pushSetup(f);await f.browser('/api/push/subscribe',subscription);
+  let calls=0;t.mock.method(globalThis,'fetch',async()=>{calls++;return new Response(null,{status:403});});
+  const response=await f.browser('/api/push/test',{}), sent=await response.json();assert.match(sent.id,/^test:/);await f.flush();
+  const history=await (await f.browser('/api/notifications')).text();
+  assert.match(history,/HTTP 403/);assert.ok(!history.includes(subscription.endpoint));assert.ok(!history.includes(subscription.keys.auth));assert.ok(!history.includes('delivery_details'));
+  await f.flush();assert.equal(calls,1);
 });

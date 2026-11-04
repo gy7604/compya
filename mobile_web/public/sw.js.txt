@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'compya-shell-2.0.21';
+const CACHE = 'compya-shell-2.0.22';
 const SHELL = ['/', '/panel.css', '/panel.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('compya-shell-') && key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));

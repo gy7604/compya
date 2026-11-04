@@ -3,15 +3,14 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0d1512"><meta name="color-scheme" content="dark">
-  <meta name="referrer" content="no-referrer"><title>컴프야 · 내 매크로</title>
+  <meta name="referrer" content="no-referrer"><title>컴프야</title>
   <link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-192.png">
   <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="컴프야">
   <link rel="stylesheet" href="/panel.css"><script src="/panel.js" defer></script>
 </head>
 <body>
 <main>
-  <header><div class="brand"><span class="mark">C</span><div><p class="eyebrow">COMPYA CONTROL</p><h1>내 매크로</h1></div></div><button id="logout" class="quiet" hidden>로그아웃</button></header>
-  <section class="card"><div class="row"><span>홈 화면에서 앱처럼 열기</span><button id="install" class="quiet">설치 안내</button></div><p id="install-note" class="small muted" hidden>Android: 브라우저 메뉴 → 앱 설치 또는 홈 화면에 추가. iPhone: Safari 공유 → 홈 화면에 추가. 설치한 앱에서 처음 한 번 로그인하세요.</p></section>
+  <header><div class="brand" aria-label="컴프야"><span class="mark" aria-hidden="true">C</span><p class="eyebrow">COMPYA CONTROL</p></div><button id="menu-open" class="menu-trigger quiet" aria-label="메뉴 열기" aria-controls="menu-dialog" aria-expanded="false" hidden><span aria-hidden="true">☰</span></button></header>
   <section id="login" class="card login">
     <p class="eyebrow">나만의 연결</p><h2>어디서든, 지금 경기 확인.</h2>
     <p class="muted">PC 프로그램의 <strong>휴대폰 웹 제어</strong>에서<br>연결 QR을 읽거나 연결 암호를 입력하세요.</p>
@@ -21,18 +20,17 @@
   <div id="dashboard" hidden>
     <section class="card overview">
       <div class="row"><span id="connection" class="chip" data-tone="offline">연결 확인 중</span><span id="updated" class="muted small">—</span></div>
-      <p class="eyebrow mode" id="mode">리그</p><h2 id="run-state">PC 상태 확인 중</h2><p id="status" class="muted detail">잠시 기다려 주세요.</p>
-      <div class="controls"><button id="start" class="primary" disabled><span>▶</span> 시작</button><button id="stop" class="secondary" disabled><span>■</span> 중지</button></div>
+      <div class="run-row"><div class="run-copy"><p class="eyebrow mode" id="mode">리그</p><h2 id="run-state">PC 상태 확인 중</h2><p id="status" class="muted detail">잠시 기다려 주세요.</p></div><div class="controls run-controls" aria-label="매크로 제어"><button id="start" class="primary" disabled><span>▶</span> 시작</button><button id="stop" class="secondary" disabled><span>■</span> 중지</button></div></div>
       <p id="command" class="note" role="status" aria-live="polite"></p><p id="blocked" class="small muted"></p>
     </section>
     <section class="stats" aria-label="진행 정보"><div class="card"><p class="eyebrow">시즌 진행</p><p id="season">확인 대기</p></div><div class="card"><p class="eyebrow">이번 실행</p><p id="league-count">확인 대기</p></div></section>
     <section class="card screen-card"><div class="row"><h2>게임 화면</h2><button id="refresh" class="quiet">새로고침 ↻</button></div><p id="screen-time" class="muted small">보는 동안 약 5초 간격으로 갱신합니다.</p><div class="screen"><img id="screen" alt="LDPlayer 0번의 현재 게임 화면" hidden><p id="screen-empty">PC에서 새 게임 화면을 기다리고 있습니다.</p></div></section>
     <section class="card timing"><p class="eyebrow">경기 시간</p><p id="timing">확인 대기</p></section>
-    <section class="card"><div class="row"><h2>게임 알림</h2><button id="push-enable" class="quiet">이 휴대폰에서 알림 켜기</button></div><p class="small muted">매크로·플레이어 문제, 랭킹 하루 완료, 리그144경기 완료를 알려드립니다.</p><p id="push-note" class="note" role="status">로그인 후 알림을 연결할 수 있습니다.</p><div class="controls"><button id="push-test" class="secondary" disabled>테스트 알림</button><button id="push-disable" class="quiet" disabled>이 기기 알림 끄기</button></div><p id="collection-state" class="small muted">PC 기록 수집 연결을 확인하고 있습니다.</p><p class="eyebrow history-label">최근 알림</p><ul id="notice-history" class="notice-history"><li>기록을 확인하고 있습니다.</li></ul></section>
-    <section class="card"><div class="row"><h2>PC 관리</h2><button id="reboot" class="quiet" disabled>PC 재부팅</button></div><p class="small muted">확인 후 20초 뒤 재부팅합니다. Windows 로그인 완료 후 다시 연결됩니다. 저장하지 않은 작업이 있으면 먼저 확인하세요.</p><button id="cancel-reboot" class="secondary" hidden>재부팅 예약 취소</button></section>
-    <footer><span id="version">Compya</span><span>PC 프로그램을 열어 두세요.</span></footer>
+    <section class="card"><h2 class="section-title">최근 알림</h2><p id="push-summary" class="note">알림 연결을 확인하고 있습니다.</p><p id="collection-state" class="small muted">PC 기록 수집 연결을 확인하고 있습니다.</p><ul id="notice-history" class="notice-history"><li>기록을 확인하고 있습니다.</li></ul></section>
+    <footer><span id="version">Compya</span><span>화면 v2.0.22</span></footer>
   </div>
   <dialog id="start-dialog"><h2>매크로를 시작할까요?</h2><p>PC에 설정된 리그·랭킹 일정과 실행 옵션을 그대로 사용합니다.</p><p id="start-mode" class="note"></p><div class="controls"><button id="cancel-start" class="secondary">취소</button><button id="confirm-start" class="primary">시작하기</button></div></dialog>
   <dialog id="reboot-dialog"><h2>PC를 재부팅할까요?</h2><p>20초 뒤 연결이 끊깁니다. Windows 로그인 후 자동 연결됩니다. 다른 프로그램의 작업을 먼저 저장하세요.</p><label for="reboot-text">확인을 위해 ‘PC 재부팅’을 입력하세요.</label><input id="reboot-text" autocomplete="off"><div class="controls"><button id="back-reboot" class="secondary">돌아가기</button><button id="confirm-reboot" class="primary" disabled>20초 뒤 재부팅</button></div></dialog>
+  <dialog id="menu-dialog" class="menu-panel" aria-labelledby="menu-title"><div class="row"><h2 id="menu-title">설정</h2><button id="menu-close" class="quiet" aria-label="메뉴 닫기">✕</button></div><section class="menu-section"><h3>게임 알림</h3><p id="push-note" class="note" role="status">이 휴대폰의 알림 연결을 확인하세요.</p><div class="menu-actions"><button id="push-enable" class="secondary">알림 켜기</button><button id="push-disable" class="quiet" disabled>알림 끄기</button><button id="push-test" class="secondary" disabled>테스트 알림</button></div><p class="small muted">테스트 알림은 매크로 시작 없이 확인할 수 있습니다.</p></section><section class="menu-section"><h3>PC 관리</h3><button id="reboot" class="secondary" disabled>PC 재부팅</button><p class="small muted">확인 후 20초 뒤 재부팅합니다. 저장하지 않은 작업을 먼저 확인하세요. Windows 로그인 후 다시 연결됩니다.</p><button id="cancel-reboot" class="secondary" hidden>재부팅 예약 취소</button></section><button id="logout" class="quiet" hidden>로그아웃</button></dialog>
 </main>
 </body></html>

@@ -6,7 +6,7 @@ import MANIFEST from './public/manifest.webmanifest';
 import ICON192 from './public/icon-192.png';
 import ICON512 from './public/icon-512.png';
 import {observeRecords,observeHealth,offlineEvent,OFFLINE_AFTER} from './monitor.mjs';
-import {validateSubscription,sendPush} from './push.mjs';
+import {validateSubscription,sendPush,deliverySummary} from './push.mjs';
 import {AGE, SESSION_AGE, SHORT_SESSION_AGE, hash, equal, session, authorized, sameOrigin, body, cleanStatus, command} from './protocol.mjs';
 
 const json = (value, status = 200, headers = {}) => Response.json(value, {status, headers});
@@ -65,11 +65,13 @@ export class ControlRoom {
     });
     if (events.length) this.ctx.waitUntil(this.deliver());
   }
-  async deliveryState(eventId,id,value,claim=false) {
+  async deliveryState(eventId,id,value,claim=false,detail=null) {
     return this.ctx.storage.transaction(async tx=>{
       const notices=await tx.get('notices') || [], notice=notices.find(item=>item.id===eventId);
       if (!notice || (claim && notice.deliveries[id]!=='pending')) return false;
-      notice.deliveries[id]=value;await tx.put('notices',notices);return true;
+      notice.deliveries[id]=value;
+      if (detail) {notice.delivery_details ||= {};notice.delivery_details[id]=detail;}
+      await tx.put('notices',notices);return true;
     });
   }
   async deliver() {
@@ -82,13 +84,14 @@ export class ControlRoom {
         const subscriptions=await store.get('subscriptions') || {}, subscription=subscriptions[id];
         if (!subscription) {await this.deliveryState(notice.id,id,'removed');continue;}
         if (!await this.deliveryState(notice.id,id,'sending',true)) continue;
-        let outcome='unknown';
+        let outcome='unknown', detail=null;
         try {
           const status=await sendPush(subscription,notice,this.env);
+          detail={status};
           outcome=status>=200 && status<300?'accepted':status===404 || status===410?'expired':'failed';
           if (status===404 || status===410) await store.transaction(async tx=>{const current=await tx.get('subscriptions') || {};delete current[id];await tx.put('subscriptions',current);});
-        } catch {}
-        await this.deliveryState(notice.id,id,outcome);
+        } catch(error) {detail={reason:['prepare','timeout','network'].includes(error?.pushReason)?error.pushReason:'network'};}
+        await this.deliveryState(notice.id,id,outcome,false,detail);
       }
     } finally {this.delivering=false;}
     const current=await this.ctx.storage.get('notices') || [];
@@ -185,12 +188,13 @@ export class ControlRoom {
       if (now-last<60_000) return json({error:'테스트 알림은1분 뒤 다시 보낼 수 있습니다.'},429);
       const subscriptions=await store.get('subscriptions') || {};
       if (!Object.keys(subscriptions).length) return json({error:'이 휴대폰에서 알림을 먼저 켜세요.'},409);
-      await store.put('last-test',now);await this.appendNotices([{id:'test:'+crypto.randomUUID(),type:'test',title:'컴프야 알림 연결 확인',body:'이 알림을 받았다면 PWA 푸시가 연결되었습니다.',at:new Date(now).toISOString()}]);
-      return json({ok:true,message:'테스트 알림을 푸시 서버에 전송합니다. 실제 휴대폰 수신을 확인하세요.'});
+      const id='test:'+crypto.randomUUID();
+      await store.put('last-test',now);await this.appendNotices([{id,type:'test',title:'컴프야 알림 연결 확인',body:'이 알림을 받았다면 PWA 푸시가 연결되었습니다.',at:new Date(now).toISOString()}]);
+      return json({ok:true,id,message:'테스트 알림 전송 결과를 확인하고 있습니다.'});
     }
     if (path === '/api/notifications' && request.method === 'GET') {
       const notices=await store.get('notices') || [], observed=await store.get('observed'), health=await store.get('health');
-      return json({collecting:observed?.ready===true,last_received_at:health?.last || null,quality:health?.collection_quality===true,items:notices.slice(-20).reverse().map(({id,type,title,body,at,deliveries})=>({id,type,title,body,at,push:Object.values(deliveries || {}).includes('accepted')?'accepted':Object.keys(deliveries || {}).length?'unconfirmed':'no-device'}))});
+      return json({collecting:observed?.ready===true,last_received_at:health?.last || null,quality:health?.collection_quality===true,items:notices.slice(-20).reverse().map(item=>({id:item.id,type:item.type,title:item.title,body:item.body,at:item.at,...deliverySummary(item)}))});
     }
     if (path === '/api/screen' && request.method === 'GET') {
       this.viewing = now + AGE;
