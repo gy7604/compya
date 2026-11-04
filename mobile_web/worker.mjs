@@ -5,6 +5,8 @@ import SW from './public/sw.js.txt';
 import MANIFEST from './public/manifest.webmanifest';
 import ICON192 from './public/icon-192.png';
 import ICON512 from './public/icon-512.png';
+import ICON180 from './public/icon-180.png';
+import BADGE96 from './public/badge-96.png';
 import {observeRecords,observeHealth,offlineEvent,OFFLINE_AFTER} from './monitor.mjs';
 import {validateSubscription,sendPush,deliverySummary} from './push.mjs';
 import {AGE, SESSION_AGE, SHORT_SESSION_AGE, hash, equal, session, authorized, sameOrigin, body, cleanStatus, command} from './protocol.mjs';
@@ -19,7 +21,8 @@ const headers = {
 const cookie = (value, age) => `compya_session=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${age}`;
 const assets = {'/': [PAGE, 'text/html; charset=utf-8'], '/panel.css': [STYLE, 'text/css; charset=utf-8'],
   '/panel.js': [SCRIPT, 'text/javascript; charset=utf-8'], '/sw.js': [SW, 'text/javascript; charset=utf-8'],
-  '/manifest.webmanifest': [MANIFEST, 'application/manifest+json'], '/icon-192.png': [ICON192, 'image/png'], '/icon-512.png': [ICON512, 'image/png']};
+  '/manifest.webmanifest': [MANIFEST, 'application/manifest+json'], '/icon-192.png': [ICON192, 'image/png'], '/icon-512.png': [ICON512, 'image/png'],
+  '/icon-192-v23.png':[ICON192,'image/png'], '/icon-512-v23.png':[ICON512,'image/png'], '/icon-180-v23.png':[ICON180,'image/png'], '/badge-96-v23.png':[BADGE96,'image/png']};
 
 export default {
   async fetch(request, env) {
@@ -27,7 +30,7 @@ export default {
     try {
       const path = new URL(request.url).pathname;
       if (request.method === 'GET' && (assets[path] || path === '/favicon.ico')) {
-        response = path === '/favicon.ico' ? new Response(null, {status: 204}) : new Response(assets[path][0], {headers: {'Content-Type': assets[path][1]}});
+        response = path === '/favicon.ico' ? new Response(ICON192,{headers:{'Content-Type':'image/png'}}) : new Response(assets[path][0], {headers: {'Content-Type': assets[path][1]}});
       } else if (!env.OWNER_KEY_HASH || !env.AGENT_KEY_HASH || !env.SESSION_KEY) {
         response = json({error: '모바일 연결 준비 중입니다.'}, 503);
       } else if (path === '/api/agent/sync' && request.method === 'POST') {

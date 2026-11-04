@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 512 512">
+  <defs>
+    <mask id="baseball" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <path fill="#000" d="M0 0h512v512H0z"/>
+      <circle cx="256" cy="256" r="188" fill="#fff"/>
+      <g fill="none" stroke="#000" stroke-width="16" stroke-linecap="round">
+        <path d="M130 105C234 173 234 339 130 407M382 105C278 173 278 339 382 407"/>
+        <path d="m157 137 29-8m-7 56 32-14m-11 75 34-16m-34 67 34-16m-55 75 32-14m-54 56 29-8"/>
+        <path d="m355 137-29-8m7 56-32-14m11 75-34-16m34 67-34-16m55 75-32-14m54 56-29-8"/>
+      </g>
+      <path d="m241 224 47 32-47 32z" stroke="#000" stroke-width="12" stroke-linejoin="round" fill="#000"/>
+    </mask>
+  </defs>
+  <path fill="#fff" mask="url(#baseball)" d="M0 0h512v512H0z"/>
+</svg>

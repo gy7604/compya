@@ -10,7 +10,7 @@ for (const [name, path] of [['PAGE','index.html'], ['STYLE','panel.css'], ['SCRI
   const text = await readFile(new URL('../public/' + path, import.meta.url), 'utf8');
   source = source.replace(new RegExp(`import ${name} from '[^']+';`), `const ${name} = ${JSON.stringify(text)};`);
 }
-for (const [name, path] of [['ICON192','icon-192.png'], ['ICON512','icon-512.png']]) {
+for (const [name, path] of [['ICON192','icon-192.png'], ['ICON512','icon-512.png'],['ICON180','icon-180.png'],['BADGE96','badge-96.png']]) {
   const bytes = await readFile(new URL('../public/' + path, import.meta.url));
   source = source.replace(new RegExp(`import ${name} from '[^']+';`), `const ${name} = new Uint8Array(${JSON.stringify([...bytes])}).buffer;`);
 }
@@ -71,11 +71,11 @@ test('30-day login is explicit and an existing session can be remembered without
 test('PWA manifest, fresh service worker and PNG icons are served with restrictive policy', async () => {
   const f=await fixture();
   const manifest=await (await f.req('/manifest.webmanifest')).json();assert.equal(manifest.display,'standalone');assert.equal(manifest.start_url,'/');
-  for (const size of [192,512]) {
-    const image=await f.req(`/icon-${size}.png`);assert.equal(image.headers.get('Content-Type'),'image/png');
+  for (const [path,size] of [['/icon-192-v23.png',192],['/icon-512-v23.png',512],['/icon-180-v23.png',180],['/badge-96-v23.png',96]]) {
+    const image=await f.req(path);assert.equal(image.headers.get('Content-Type'),'image/png');
     const raw=new DataView(await image.arrayBuffer());assert.equal(raw.getUint32(16),size);assert.equal(raw.getUint32(20),size);
   }
-  const sw=await f.req('/sw.js');assert.equal(sw.headers.get('Cache-Control'),'no-store');assert.match(await sw.text(),/compya-shell-2.0.22/);
+  const sw=await f.req('/sw.js');assert.equal(sw.headers.get('Cache-Control'),'no-store');assert.match(await sw.text(),/compya-shell-2.0.23/);
   assert.match((await f.req('/')).headers.get('Content-Security-Policy'),/worker-src 'self'; manifest-src 'self'/);
 });
 test('reboot requires a one-use, current-boot challenge and typed confirmation', async () => {

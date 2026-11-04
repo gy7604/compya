@@ -4,13 +4,13 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0d1512"><meta name="color-scheme" content="dark">
   <meta name="referrer" content="no-referrer"><title>컴프야</title>
-  <link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" type="image/png" href="/icon-192-v23.png"><link rel="apple-touch-icon" sizes="180x180" href="/icon-180-v23.png">
   <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="컴프야">
   <link rel="stylesheet" href="/panel.css"><script src="/panel.js" defer></script>
 </head>
 <body>
 <main>
-  <header><div class="brand" aria-label="컴프야"><span class="mark" aria-hidden="true">C</span><p class="eyebrow">COMPYA CONTROL</p></div><button id="menu-open" class="menu-trigger quiet" aria-label="메뉴 열기" aria-controls="menu-dialog" aria-expanded="false" hidden><span aria-hidden="true">☰</span></button></header>
+  <header><div class="brand" aria-label="컴프야"><img class="mark" src="/icon-192-v23.png" alt="" aria-hidden="true" width="44" height="44"><p class="eyebrow">COMPYA CONTROL</p></div><button id="menu-open" class="menu-trigger quiet" aria-label="메뉴 열기" aria-controls="menu-dialog" aria-expanded="false" hidden><span aria-hidden="true">☰</span></button></header>
   <section id="login" class="card login">
     <p class="eyebrow">나만의 연결</p><h2>어디서든, 지금 경기 확인.</h2>
     <p class="muted">PC 프로그램의 <strong>휴대폰 웹 제어</strong>에서<br>연결 QR을 읽거나 연결 암호를 입력하세요.</p>
@@ -27,7 +27,7 @@
     <section class="card screen-card"><div class="row"><h2>게임 화면</h2><button id="refresh" class="quiet">새로고침 ↻</button></div><p id="screen-time" class="muted small">보는 동안 약 5초 간격으로 갱신합니다.</p><div class="screen"><img id="screen" alt="LDPlayer 0번의 현재 게임 화면" hidden><p id="screen-empty">PC에서 새 게임 화면을 기다리고 있습니다.</p></div></section>
     <section class="card timing"><p class="eyebrow">경기 시간</p><p id="timing">확인 대기</p></section>
     <section class="card"><h2 class="section-title">최근 알림</h2><p id="push-summary" class="note">알림 연결을 확인하고 있습니다.</p><p id="collection-state" class="small muted">PC 기록 수집 연결을 확인하고 있습니다.</p><ul id="notice-history" class="notice-history"><li>기록을 확인하고 있습니다.</li></ul></section>
-    <footer><span id="version">Compya</span><span>화면 v2.0.22</span></footer>
+    <footer><span id="version">Compya</span><span>화면 v2.0.23</span></footer>
   </div>
   <dialog id="start-dialog"><h2>매크로를 시작할까요?</h2><p>PC에 설정된 리그·랭킹 일정과 실행 옵션을 그대로 사용합니다.</p><p id="start-mode" class="note"></p><div class="controls"><button id="cancel-start" class="secondary">취소</button><button id="confirm-start" class="primary">시작하기</button></div></dialog>
   <dialog id="reboot-dialog"><h2>PC를 재부팅할까요?</h2><p>20초 뒤 연결이 끊깁니다. Windows 로그인 후 자동 연결됩니다. 다른 프로그램의 작업을 먼저 저장하세요.</p><label for="reboot-text">확인을 위해 ‘PC 재부팅’을 입력하세요.</label><input id="reboot-text" autocomplete="off"><div class="controls"><button id="back-reboot" class="secondary">돌아가기</button><button id="confirm-reboot" class="primary" disabled>20초 뒤 재부팅</button></div></dialog>

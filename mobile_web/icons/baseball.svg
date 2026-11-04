@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="field" x1="64" y1="0" x2="448" y2="512" gradientUnits="userSpaceOnUse"><stop stop-color="#225139"/><stop offset="1" stop-color="#0b241b"/></linearGradient>
+    <linearGradient id="ball" x1="180" y1="100" x2="348" y2="404" gradientUnits="userSpaceOnUse"><stop stop-color="#fffdf1"/><stop offset="1" stop-color="#e4eadb"/></linearGradient>
+    <clipPath id="edge"><circle cx="256" cy="256" r="156"/></clipPath>
+    <g id="seam" fill="none" stroke="#cc4b45" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M161 120C225 179 225 333 161 392" stroke-width="6"/>
+      <path d="m171 146 20-5m-7 34 21-8m-9 40 22-10m-16 43 23-11m-23 46 23-11m-28 45 22-9m-35 39 21-6m-32 30 20-3" stroke-width="7"/>
+    </g>
+  </defs>
+  <path fill="url(#field)" d="M0 0h512v512H0z"/>
+  <circle cx="256" cy="256" r="184" fill="none" stroke="#b8ef6a" stroke-opacity=".24" stroke-width="3"/>
+  <circle cx="256" cy="264" r="158" fill="#061a12" opacity=".3"/>
+  <circle cx="256" cy="256" r="156" fill="url(#ball)"/>
+  <g clip-path="url(#edge)"><use href="#seam"/><use href="#seam" transform="translate(512 0) scale(-1 1)"/></g>
+  <path d="m241 226 45 30-45 30z" fill="#214e36" stroke="#214e36" stroke-width="10" stroke-linejoin="round"/>
+</svg>
