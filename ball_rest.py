@@ -1,4 +1,4 @@
-"""A durable 26 minute league pause; manual Stop always remains responsive."""
+"""Poll ball stock every five minutes; confirm five balls after 1.5 seconds."""
 import json
 import math
 from datetime import datetime,timedelta,timezone
@@ -8,44 +8,73 @@ KST=timezone(timedelta(hours=9))
 
 
 class BallRest:
-    seconds=26*60
+    interval=300
+    confirm_delay=1.5
 
     def __init__(self,root,dry=False,clock=None):
         self.path=Path(root)/'ball_rest.json';self.dry=dry
-        self.clock=clock or (lambda:datetime.now(KST));self.until=None;self.events=[]
+        self.clock=clock or (lambda:datetime.now(KST));self.waiting=False;self.next_check=None;self.events=[]
+        self.last_stock=None;self.candidate=None;self.candidate_at=None
         self.last_minute=None;self.next_close=float('-inf');self.close_counts={}
         if not dry and self.path.exists():
             data=json.loads(self.path.read_text(encoding='utf-8'))
-            if data.get('until'):
-                self.until=datetime.fromisoformat(data['until'])
-                if self.until.tzinfo is None:raise ValueError('볼 충전 대기 시간대를 확인하세요.')
+            if data.get('schema')==2:
+                self.waiting=data.get('waiting') is True;self.last_stock=data.get('last_stock')
+                if self.waiting:
+                    self.next_check=datetime.fromisoformat(data['next_check_at'])
+                    if self.next_check.tzinfo is None:raise ValueError('볼 잔량 확인 시간대를 확인하세요.')
+            elif data.get('until'):
+                self.waiting=True;self.next_check=self.clock()
+                self.events.append('기존 볼 충전 대기 이어받기 · 남은 볼을 직접 확인한 뒤 재개')
 
     def save(self):
         if self.dry:return
         temp=self.path.with_suffix('.tmp')
-        temp.write_text(json.dumps({'until':self.until.isoformat() if self.until else None}),encoding='utf-8')
+        temp.write_text(json.dumps(dict(schema=2,waiting=self.waiting,last_stock=self.last_stock,
+                                       next_check_at=self.next_check.isoformat() if self.next_check else None)),encoding='utf-8')
         temp.replace(self.path)
 
     @property
-    def active(self):return self.until is not None
+    def active(self):return self.waiting
 
     def begin(self,reason):
         if self.active:return False
-        self.until=self.clock()+timedelta(seconds=self.seconds);self.save()
+        self.waiting=True;self.next_check=self.clock();self.candidate=None;self.candidate_at=None;self.save()
         self.last_minute=None;self.close_counts={};self.next_close=float('-inf')
-        self.events.append(reason+' · 볼 충전 26분 대기 · '+self.until.astimezone(KST).strftime('%H:%M:%S')+' 리그 재개 예정')
+        self.events.append(reason+' · 볼 충전 대기 · 5분마다 잔량 확인 · 5개 이상 두 번 확인 후 재개')
         return True
 
+    def due(self):return self.active and self.clock()>=self.next_check
+
     def tick(self):
-        if not self.active:return False
-        remaining=max(0,math.ceil((self.until-self.clock()).total_seconds()))
-        if remaining==0:
-            self.until=None;self.save();self.events.append('볼 충전 대기 26분 완료 · 현재 화면에서 리그 재개');return True
-        minute=math.ceil(remaining/60)
-        if minute!=self.last_minute:
-            self.events.append(f'볼 충전 대기 · 남은 {minute}분 · 리그 자동 재개 예정')
-            self.last_minute=minute
-        return False
+        if not self.active:return
+        minute=math.ceil(max(0,(self.next_check-self.clock()).total_seconds())/60)
+        status=('confirm',self.candidate) if self.candidate else ('poll',minute)
+        if status!=self.last_minute:
+            self.events.append(f'볼 잔량 {self.candidate[0]}개 · 즉시 재확인 중' if self.candidate else
+                               '볼 충전 대기 · '+(f'{minute}분 후 잔량 재확인' if minute else '로비의 볼 잔량 확인 대기'))
+            self.last_minute=status
+
+    def submit(self,stock):
+        if not self.due():return False
+        now=self.clock()
+        valid=(isinstance(stock,tuple) and len(stock)==2 and all(type(x) is int for x in stock)
+               and 0<=stock[0]<=9999 and 50<=stock[1]<=9999)
+        if not valid:
+            self.candidate=None;self.candidate_at=None;self.next_check=now+timedelta(seconds=self.interval)
+            self.events.append('볼 잔량 판독 불확실 · 대기 유지 · 5분 뒤 재확인')
+        else:
+            self.last_stock=list(stock)
+            if stock[0]<5:
+                self.candidate=None;self.candidate_at=None;self.next_check=now+timedelta(seconds=self.interval)
+                self.events.append(f'볼 잔량 {stock[0]}/{stock[1]} · 5개 미만 · 5분 뒤 재확인')
+            elif self.candidate==stock and self.confirm_delay<=(now-self.candidate_at).total_seconds()<=30:
+                self.waiting=False;self.next_check=None;self.candidate=None;self.candidate_at=None;self.save()
+                self.events.append(f'볼 잔량 {stock[0]}개 두 번 일치 · 리그 자동 재개');return True
+            else:
+                self.candidate=stock;self.candidate_at=now;self.next_check=now+timedelta(seconds=self.confirm_delay)
+                self.events.append(f'볼 잔량 {stock[0]}개 확인 · 1.5초 뒤 즉시 재확인')
+        self.last_minute=None;self.save();return False
 
     def close_point(self,layout,now):
         # Leave only positively recognized free overlays/result menus.
@@ -66,4 +95,4 @@ def begin_ball_rest(app,cfg,guard,rest,png,root):
     config=cfg.get('notifications',{})
     if cfg['dry']:app.emit('모의 볼 충전 대기 알림 · 실제 전송 안 함')
     elif config.get('enabled'):
-        app.dispatch_notification(config,'컴프야: '+guard.reason+'. 볼 충전을 위해 26분간 리그를 일시 정지합니다. '+rest.until.astimezone(KST).strftime('%H:%M:%S')+'부터 자동으로 재개합니다.')
+        app.dispatch_notification(config,'컴프야: '+guard.reason+'. 리그를 일시 정지하고 5분마다 남은 볼을 확인합니다. 5개 이상을 두 번 확인하면 자동으로 재개합니다.')

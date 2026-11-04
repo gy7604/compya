@@ -73,11 +73,12 @@ class BallTests(unittest.TestCase):
                 self.assertEqual(app.dispatch_notification.call_count,int(enabled and not dry))
                 self.assertEqual((Path(root)/'logs/ball_wait.png').read_bytes(),b'png')
 
-    def test_session_waits_26_minutes_without_restart_then_resumes(self):
+    def test_session_polls_stock_after_five_minutes_then_confirms_without_extra_five_minute_wait(self):
         with tempfile.TemporaryDirectory() as root:
             app=App.__new__(App);app.stop=threading.Event();app.emit=Mock();app.dispatch_notification=Mock()
             now=[datetime(2026,11,4,8,tzinfo=KST)]
-            def wait(seconds):now[0]+=timedelta(seconds=max(60,seconds));return False
+            def wait(seconds):
+                now[0]+=timedelta(seconds=seconds if rest.candidate else max(60,seconds));return False
             app.stop.wait=Mock(side_effect=wait)
             app.registry=Mock();app.registry.resolve.side_effect=lambda p:p
             button=new_button('play');button.update(id='play',enabled=True,template='play.png')
@@ -86,30 +87,35 @@ class BallTests(unittest.TestCase):
             g=Mock(hold=True,reason='볼 구매 화면 감지',layout=None)
             def observe(*args):g.hold=adb.screenshot.call_count<=2;return adb.screenshot.call_count==2
             g.observe.side_effect=observe
+            samples=[];reader=Mock();reader.visible.return_value=True
+            def read(*args):
+                samples.append(now[0]);return (4,120) if len(samples)==1 else (5,120)
+            reader.read.side_effect=read
             def tap(point):
-                self.assertGreaterEqual(now[0],deadline[0]);app.stop.set()
+                self.assertEqual(len(samples),3)
+                self.assertGreaterEqual((samples[1]-samples[0]).total_seconds(),300)
+                self.assertGreaterEqual((samples[2]-samples[1]).total_seconds(),1.5)
+                self.assertLess((samples[2]-samples[1]).total_seconds(),3)
+                app.stop.set()
             adb.tap.side_effect=tap
-            rest=BallRest(root,clock=lambda:now[0]);deadline=[None]
-            original_begin=rest.begin
-            def begin(reason):
-                result=original_begin(reason);deadline[0]=rest.until;return result
-            rest.begin=begin
+            rest=BallRest(root,clock=lambda:now[0])
             matcher=Mock();matcher.find.return_value=(True,(1,1),1.,(720,1280))
             cfg=dict(buttons=[button],dry=False,notifications=dict(enabled=False),adb='adb',serial='device',_scheduled=True)
             with patch('app.ROOT',Path(root)),patch('app.BallGuard',return_value=g),patch('app.ADB',return_value=adb),\
-                    patch('vision.Matcher',return_value=matcher),patch('app.BallRest',return_value=rest):
+                    patch('vision.Matcher',return_value=matcher),patch('app.BallRest',return_value=rest),patch('app.BallBalanceReader',return_value=reader):
                 app.run_session(cfg)
             self.assertTrue(app.stop.is_set());self.assertFalse(rest.active)
             adb.tap.assert_called_once();adb.stop_app.assert_not_called();adb.launch_app.assert_not_called()
 
-    def test_rest_deadline_survives_restart_and_does_not_extend_on_repeated_detection(self):
+    def test_poll_time_survives_restart_and_elapsed_time_alone_never_resumes(self):
         with tempfile.TemporaryDirectory() as root:
             now=[datetime(2026,11,4,8,tzinfo=KST)];r=BallRest(root,clock=lambda:now[0])
-            self.assertTrue(r.begin('부족'));until=r.until
-            now[0]+=timedelta(minutes=10);self.assertFalse(r.begin('같은 창'));self.assertEqual(r.until,until)
-            r=BallRest(root,clock=lambda:now[0]);self.assertTrue(r.active);self.assertFalse(r.tick())
-            now[0]=until-timedelta(seconds=1);self.assertFalse(r.tick())
-            now[0]=until;self.assertTrue(r.tick());self.assertFalse(r.active)
+            self.assertTrue(r.begin('부족'));r.submit((3,120));check=r.next_check
+            now[0]+=timedelta(minutes=1);self.assertFalse(r.begin('같은 창'));self.assertEqual(r.next_check,check)
+            r=BallRest(root,clock=lambda:now[0]);self.assertTrue(r.active);self.assertFalse(r.due())
+            now[0]+=timedelta(hours=8);r.tick();self.assertTrue(r.active)
+            self.assertFalse(r.submit((5,120)));now[0]+=timedelta(seconds=1.5)
+            self.assertTrue(r.submit((5,120)));self.assertFalse(r.active)
             self.assertFalse(BallRest(root).active)
 
     def test_ball_pause_can_yield_to_ranking_without_marking_day_done(self):

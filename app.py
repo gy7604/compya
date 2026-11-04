@@ -21,6 +21,7 @@ from league_timing import LeagueTiming,START_NAMES,duration_text
 from league_rewards import LeagueRewards
 from ball_guard import BallGuard
 from ball_rest import BallRest, begin_ball_rest
+from ball_balance import BallBalanceReader
 from sponsor import Sponsor
 from league_bonus import LeagueBonus
 from collections import deque
@@ -447,6 +448,7 @@ class App:
             rewards=LeagueRewards(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             balls=BallGuard(ROOT)
             rest=BallRest(ROOT,dry=cfg['dry'])
+            balance=BallBalanceReader(ROOT)
             sponsor=Sponsor(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             bonus=LeagueBonus(ROOT,enabled=not ranking_config['enabled'],dry=cfg['dry'])
             season=SeasonProgress(ROOT,dry=cfg['dry'])
@@ -583,7 +585,7 @@ class App:
 
             while not self.stop.is_set():
                 if not ranking_config['enabled']:
-                    if rest.tick():reset_maintenance();time_event()
+                    rest.tick()
                     while rest.events:
                         rest_message=rest.events.pop(0);self.emit(rest_message)
                         if hasattr(self,'events'):self.events.put(('league_time',rest_message))
@@ -647,7 +649,17 @@ class App:
                 if rest.active and not ranking_config['enabled']:
                     if cfg.get('_handoff') and cfg['_handoff']():
                         cfg['_yielded']=True;self.emit('볼 충전 대기 중 랭킹 시간 도달 · 랭킹으로 전환');break
-                    watchdog.reset();transition_watch=TransitionWatch();self.stop.wait(1);continue
+                    if rest.due() and balance.visible(png):
+                        stock=balance.read(png,self.stop)
+                        if self.stop.is_set():break
+                        resumed=rest.submit(stock)
+                        try:
+                            folder=ROOT/'logs';folder.mkdir(exist_ok=True)
+                            (folder/('ball_balance_confirmed.png' if resumed else 'ball_balance_last.png')).write_bytes(png)
+                        except OSError:pass
+                        if resumed:reset_maintenance();time_event();continue
+                    watchdog.reset();transition_watch=TransitionWatch()
+                    self.stop.wait(.2 if rest.candidate is not None else 1);continue
                 if balls.hold and not ranking_config['enabled']:
                     watchdog.reset();transition_watch=TransitionWatch()
                     self.stop.wait(.2);continue
