@@ -2,6 +2,33 @@
 from engine import SafetyStop
 
 
+class PopupCloser:
+    """Give registered harmless popups precedence over every mode supervisor."""
+    def __init__(self,keys):
+        self.keys=list(keys);self.counts={};self.pending=None;self.absent=0;self.attempts=0
+        self.last=float('-inf');self.hold=False;self.resumed=False;self.events=[]
+
+    def observe(self,found,now):
+        self.resumed=False
+        for key in self.keys:self.counts[key]=self.counts.get(key,0)+1 if found.get(key,False) else 0
+        present=next((key for key in self.keys if found.get(key,False)),None)
+        self.hold=bool(self.pending or present)
+        if self.pending:
+            self.absent=0 if found.get(self.pending,False) else self.absent+1
+            if self.absent>=3:
+                self.pending=None;self.attempts=0;self.absent=0;self.resumed=True
+                self.hold=bool(present)
+                self.events.append('공지/광고 닫힘 확인 · 현재 화면부터 진행 재개')
+                return None
+            if not found.get(self.pending,False):return None
+            key=self.pending
+        else:key=present
+        if key is None or self.counts[key]<3 or now-self.last<8:return None
+        if self.attempts>=3:raise SafetyStop('등록된 공지/광고 닫기 3회 후에도 표시 · 추가 클릭 없이 확인 필요')
+        self.pending=key;self.attempts+=1;self.last=now
+        return key
+
+
 class VideoSkipper:
     """Tap only positively registered cinematic overlays, including during reconnect."""
     def __init__(self, keys, intro_keys=(), end_keys=()):

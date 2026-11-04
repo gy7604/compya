@@ -19,7 +19,7 @@ def slot_key(now):
 class Sponsor:
     def __init__(self,root,enabled=True,dry=False,clock=None):
         self.root=Path(root);self.path=self.root/'sponsor_state.json';self.dry=dry
-        self.clock=clock or (lambda:datetime.now(KST));self.hold=False;self.events=[];self.finished=False
+        self.clock=clock or (lambda:datetime.now(KST));self.hold=False;self.events=[];self.finished=False;self.recovering=False
         self.data={'slots':{},'active':None};self.matchers={};self.candidate=None;self.frames=0
         self.since=None;self.next_action=float('-inf');self.last_action=None;self.nav_taps={}
         if not enabled or not all((self.root/'assets'/name).is_file() for name in FILES):return
@@ -63,10 +63,15 @@ class Sponsor:
         return point
 
     def observe(self,png,now,stop):
-        self.hold=False;self.finished=False
+        self.hold=False;self.finished=False;self.recovering=False
         if not self.matchers or stop.is_set():return None
         view=self.scan(png)
         self.frames=self.frames+1 if view and self.candidate==view else 1;self.candidate=view
+        if self.active and self.data['slots'][self.data['active']]['state']=='routing' and view is None:
+            # A queued trip must not hide login screens, ads or ongoing gameplay.
+            # The regular bounded recovery owns these screens; no settlement
+            # has been attempted yet and its durable intent remains unchanged.
+            self.recovering=True;self.since=None;return None
         if not self.active:
             key=self.due()
             if not key or view not in ('home','league','result','sponsor'):return None

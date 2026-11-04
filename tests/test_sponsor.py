@@ -72,7 +72,23 @@ class SponsorTests(unittest.TestCase):
             s=self.fixture(root);self.observe(s,'home',0);self.observe(s,'home',1)
             self.observe(s,'reward',7)
             with self.assertRaises(SafetyStop):self.observe(s,'reward',8)
-            with self.assertRaises(SafetyStop):self.observe(s,None,123)
+            with self.assertRaises(SafetyStop):self.observe(s,'home',123)
+
+    def test_queued_route_yields_unknown_login_and_notice_screens_to_recovery(self):
+        with tempfile.TemporaryDirectory() as root:
+            s=self.fixture(root);self.observe(s,'home',0);self.observe(s,'home',1)
+            for t in (5,60,180):
+                self.assertIsNone(self.observe(s,None,t));self.assertFalse(s.hold);self.assertTrue(s.recovering)
+            self.assertTrue(s.active)
+            self.observe(s,'sponsor',181);self.assertEqual(self.observe(s,'sponsor',182),(360,1145))
+            self.assertFalse(s.recovering)
+            self.assertIsNone(self.observe(s,'sponsor',190))
+
+    def test_unconfirmed_settlement_does_not_yield_or_repeat_its_payment_on_unknown_screen(self):
+        with tempfile.TemporaryDirectory() as root:
+            s=self.fixture(root);self.observe(s,'sponsor',0);self.observe(s,'sponsor',1)
+            self.assertIsNone(self.observe(s,None,10));self.assertTrue(s.hold);self.assertFalse(s.recovering)
+            with self.assertRaises(SafetyStop):self.observe(s,None,122)
 
     def test_dry_run_never_creates_a_ledger_and_stop_cancels_inputs(self):
         with tempfile.TemporaryDirectory() as root:

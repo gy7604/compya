@@ -32,7 +32,7 @@ from ranking import RankingStore, RankingMachine, default_ranking, validate_rank
 from notifications import NotificationStore, NotificationDetector, default_notifications, validate_notifications, send_notification
 from progress import ProgressStore, ProgressClicker, default_progress, validate_progress
 from ranking_schedule import ScheduleStore, ScheduledRunner
-from interruptions import CoachAdvice, VideoSkipper
+from interruptions import CoachAdvice, VideoSkipper, PopupCloser
 from runtime_resources import ensure_runtime_resources
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -424,6 +424,7 @@ class App:
                     self.emit('랭킹 보상 수령 이어받기 · 획득 팝업 확인 후 로비 복귀')
             recovery_config=recovery_for_mode(cfg.get('recovery',default_recovery()),ranking_config['enabled'])
             recovery=RecoveryMachine(recovery_config,cfg['buttons'])
+            popup_closer=PopupCloser(recovery_config['popups'] if recovery_config['enabled'] else [])
             if cfg.get('_activate_route'):recovery.active=True
             coach=CoachAdvice()
             video_keys=[r['id'] for r in cfg['buttons'] if r['enabled'] and r.get('video_skip') is True]
@@ -594,7 +595,7 @@ class App:
                         if player_restart:player_restart.connect_selected()
                         else:adb.connect()
                         need_connect=False
-                    if recovery_config['enabled'] and not ((rest.active or sponsor.active) and not ranking_config['enabled']):
+                    if recovery_config['enabled'] and not ((rest.active or (sponsor.active and not sponsor.recovering)) and not ranking_config['enabled']):
                         poll_now=time.monotonic()
                         if poll_now-last_process_poll>=2:
                             last_process_poll=poll_now
@@ -628,6 +629,23 @@ class App:
                     self.stop.wait(2);continue
                 previous_png,png=png,next_png
                 maintenance_now=time.monotonic() if isinstance(png,bytes) else 0
+                popup_results={key:matchers[key].find(png) for key in popup_closer.keys}
+                popup_action=popup_closer.observe({key:value[0] for key,value in popup_results.items()},maintenance_now)
+                while popup_closer.events:self.emit(popup_closer.events.pop(0))
+                if popup_closer.resumed:
+                    machine.league_result(maintenance_now)
+                    transition_watch=TransitionWatch();watchdog.reset()
+                    video=VideoSkipper(video_keys,[r['id'] for r in cfg['buttons'] if r['id'] in video_keys and r.get('video_intro') is True],video_ends)
+                if popup_closer.hold:
+                    watchdog.reset();transition_watch=TransitionWatch()
+                    if popup_action and not self.stop.is_set():
+                        matched,center,score,popup_size=popup_results[popup_action]
+                        if expected.get(popup_action,popup_size)!=popup_size:raise SafetyStop('공지/광고 등록 해상도와 현재 화면이 다릅니다.')
+                        point=click_point(records[popup_action],center,popup_size)
+                        if not cfg['dry']:adb.tap(point)
+                        last_click=dict(button=popup_action,point=point,time=maintenance_now,dry=cfg['dry'])
+                        self.emit(f'{"모의 " if cfg["dry"] else ""}공지/광고 우선 닫기 · {records[popup_action]["name"]} · 점수={score:.3f}')
+                    self.stop.wait(.2);continue
                 if not ranking_config['enabled']:
                     if balls.observe(png,maintenance_now,self.stop):
                         if not rest.active:
@@ -747,7 +765,8 @@ class App:
                         if video.hold:
                             watchdog.reset();self.stop.wait(.1);continue
                 results = dict(video_results)
-                results.update({name: matcher.find(png) for name, matcher in matchers.items() if name not in video_results})
+                results.update(popup_results)
+                results.update({name: matcher.find(png) for name, matcher in matchers.items() if name not in results})
                 size = next(iter(results.values()))[3]
                 if (dimensions is not None and dimensions != size) or any(v != size for v in expected.values()):
                     raise RuntimeError('등록 이미지와 화면 해상도가 다릅니다. 현재 해상도로 다시 등록하세요.')
