@@ -615,6 +615,8 @@ class App:
                         matchers[key]=PriceMatcher(self.registry.resolve(r['template']),max(.94,r['threshold']),r['roi'])
             expected = {key: tuple(r['size']) for key, r in records.items() if r.get('size')}
             adb = ADB(cfg['adb'], cfg['serial'])
+            from player_ads import create_player_ads
+            player_ads=create_player_ads(cfg,self.stop)
             player_restart=None
             if watch_enabled and recovery_config.get('restart_player',True):
                 from player_restart import PlayerRestart
@@ -691,6 +693,13 @@ class App:
                 transition_watch=TransitionWatch();watchdog.reset();last_process_poll=float('-inf')
 
             while not self.stop.is_set():
+                if player_ads:
+                    host_hold=player_ads.observe(time.monotonic(),cfg['dry'])
+                    while player_ads.events:self.emit(player_ads.events.pop(0))
+                    if player_ads.resumed:reset_maintenance()
+                    if host_hold:
+                        watchdog.reset();transition_watch=TransitionWatch()
+                        self.stop.wait(.2);continue
                 if not ranking_config['enabled']:
                     rest.tick()
                     while rest.events:
