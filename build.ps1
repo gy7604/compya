@@ -18,7 +18,7 @@ Copy-Item -LiteralPath "$PSScriptRoot/README.md", "$PSScriptRoot/TEST_RESULTS.md
 $compatAssets="$PSScriptRoot/dist/V26Macro/_internal/compya_resources"
 New-Item -ItemType Directory -Force $compatAssets | Out-Null
 Copy-Item -LiteralPath "$PSScriptRoot/dist/V26Macro/PriceOCR.exe", "$PSScriptRoot/assets/coach_advice.png", "$PSScriptRoot/assets/league_next_match.png", "$PSScriptRoot/assets/league_round_label.png", "$PSScriptRoot/assets/league_play_hud.png" -Destination $compatAssets
-$leagueSafetyAssets = @('ball_shop_description.png','ball_shop_icon.png','ball_result_icon.png','ball_result_disabled.png','ball_info_title.png','ball_info_icon.png','league_bonus_ready.png','league_bonus_title.png','league_bonus_close.png','league_bonus_done.png','ball_balance_icon.png')
+$leagueSafetyAssets = @('ball_shop_description.png','ball_shop_icon.png','ball_result_icon.png','ball_result_disabled.png','ball_info_title.png','ball_info_icon.png','league_bonus_ready.png','league_bonus_title.png','league_bonus_close.png','league_bonus_close_v2.png','league_bonus_done.png','ball_balance_icon.png')
 foreach ($assetName in $leagueSafetyAssets) {
     Copy-Item -LiteralPath "$PSScriptRoot/assets/$assetName" -Destination "$PSScriptRoot/dist/V26Macro/assets/$assetName"
     Copy-Item -LiteralPath "$PSScriptRoot/assets/$assetName" -Destination "$compatAssets/$assetName"

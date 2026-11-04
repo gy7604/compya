@@ -1122,6 +1122,7 @@ class App:
                                  recovery_active=recovery.active if recovery else False,
                                  recovery_step=recovery.index if recovery else None,
                                  recovery_launches=recovery.launches if recovery else 0,
+                                 league_bonus=bonus.diagnostics() if 'bonus' in locals() else None,
                                  ranking_phase=ranking.phase if ranking else None)
                     path = write_stop_snapshot(ROOT, png, records, results,
                                                machine.pending if machine else None, cfg['dry'],

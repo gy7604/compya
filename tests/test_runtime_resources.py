@@ -69,3 +69,11 @@ class ResourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             self.assertEqual(ensure_runtime_resources(root),[])
             self.assertEqual(list(Path(root).iterdir()),[])
+
+    def test_versioned_bonus_close_is_restored_without_overwriting_old_user_asset(self):
+        with tempfile.TemporaryDirectory() as root:
+            root=Path(root);self.bundle(root);(root/'assets').mkdir()
+            old=root/'assets/league_bonus_close.png';old.write_bytes(b'preserved old hand-overlay capture')
+            ensure_runtime_resources(root)
+            self.assertEqual((root/'assets/league_bonus_close_v2.png').read_bytes(),PNG)
+            self.assertEqual(old.read_bytes(),b'preserved old hand-overlay capture')
