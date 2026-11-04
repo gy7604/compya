@@ -1,5 +1,6 @@
 export const AGE = 30_000;
-export const SESSION_AGE = 12 * 3600;
+export const SESSION_AGE = 30 * 24 * 3600;
+export const SHORT_SESSION_AGE = 12 * 3600;
 const encoder = new TextEncoder();
 export const hash = async value => hex(await crypto.subtle.digest('SHA-256', encoder.encode(value)));
 const hex = value => [...new Uint8Array(value)].map(v => v.toString(16).padStart(2, '0')).join('');
@@ -13,8 +14,8 @@ async function sign(secret, value) {
   const key = await crypto.subtle.importKey('raw', encoder.encode(secret), {name: 'HMAC', hash: 'SHA-256'}, false, ['sign']);
   return hex(await crypto.subtle.sign('HMAC', key, encoder.encode(value)));
 }
-export async function session(secret, now = Date.now()) {
-  const value = encode({exp: Math.floor(now / 1000) + SESSION_AGE, nonce: crypto.randomUUID()});
+export async function session(secret, now = Date.now(), age = SESSION_AGE) {
+  const value = encode({exp: Math.floor(now / 1000) + age, nonce: crypto.randomUUID()});
   return value + '.' + await sign(secret, value);
 }
 export async function authorized(request, secret, now = Date.now()) {
@@ -41,12 +42,14 @@ export function cleanStatus(value) {
   if (!value || typeof value !== 'object') throw new Error('Invalid status');
   const result = {};
   for (const key of ['version', 'mode', 'status', 'league_count', 'season', 'timing', 'blocked']) result[key] = String(value[key] || '').slice(0, 240);
-  for (const key of ['running', 'stopping', 'can_start', 'dry']) result[key] = value[key] === true;
+  for (const key of ['running', 'stopping', 'can_start', 'dry', 'startup_ready', 'reboot_pending']) result[key] = value[key] === true;
   return result;
 }
 export function command(data, current, boot, now) {
-  if (!/^[a-f0-9-]{36}$/.test(data.id || '') || !['start', 'stop'].includes(data.action)) throw new Error('허용되지 않은 명령입니다.');
+  if (!/^[a-f0-9-]{36}$/.test(data.id || '') || !['start', 'stop', 'reboot', 'reboot_cancel'].includes(data.action)) throw new Error('허용되지 않은 명령입니다.');
   if (!current || !boot) throw new Error('PC 연결을 먼저 확인하세요.');
   if (data.action === 'start' && (!current.can_start || current.running)) throw new Error(current.blocked || '이미 실행 중입니다.');
+  if (data.action === 'reboot' && (!current.startup_ready || current.reboot_pending)) throw new Error('PC 자동 연결 설정 또는 재부팅 예약을 확인하세요.');
+  if (data.action === 'reboot_cancel' && !current.reboot_pending) throw new Error('현재 재부팅 예약이 없습니다.');
   return {id: data.id, action: data.action, boot_id: boot, expires: (now + AGE) / 1000, state: 'queued', message: 'PC에 전달 중'};
 }

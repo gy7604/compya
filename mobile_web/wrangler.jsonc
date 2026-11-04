@@ -8,5 +8,5 @@
   "observability": {"enabled": false},
   "durable_objects": {"bindings": [{"name": "CONTROL", "class_name": "ControlRoom"}]},
   "migrations": [{"tag": "v1", "new_sqlite_classes": ["ControlRoom"]}],
-  "rules": [{"type": "Text", "globs": ["**/*.html", "**/*.css", "**/*.js.txt"], "fallthrough": true}]
+  "rules": [{"type": "Text", "globs": ["**/*.html", "**/*.css", "**/*.js.txt", "**/*.webmanifest"], "fallthrough": true}, {"type": "Data", "globs": ["**/*.png"], "fallthrough": true}]
 }

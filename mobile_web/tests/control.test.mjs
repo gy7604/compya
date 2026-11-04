@@ -4,9 +4,13 @@ import {readFile} from 'node:fs/promises';
 import {hash, session, authorized, command} from '../protocol.mjs';
 
 let source = await readFile(new URL('../worker.mjs', import.meta.url), 'utf8');
-for (const [name, path] of [['PAGE','index.html'], ['STYLE','panel.css'], ['SCRIPT','panel.js.txt']]) {
+for (const [name, path] of [['PAGE','index.html'], ['STYLE','panel.css'], ['SCRIPT','panel.js.txt'], ['SW','sw.js.txt'], ['MANIFEST','manifest.webmanifest']]) {
   const text = await readFile(new URL('../public/' + path, import.meta.url), 'utf8');
   source = source.replace(new RegExp(`import ${name} from '[^']+';`), `const ${name} = ${JSON.stringify(text)};`);
+}
+for (const [name, path] of [['ICON192','icon-192.png'], ['ICON512','icon-512.png']]) {
+  const bytes = await readFile(new URL('../public/' + path, import.meta.url));
+  source = source.replace(new RegExp(`import ${name} from '[^']+';`), `const ${name} = new Uint8Array(${JSON.stringify([...bytes])}).buffer;`);
 }
 source = source.replace("'./protocol.mjs'", JSON.stringify(new URL('../protocol.mjs', import.meta.url).href));
 const {default: worker, ControlRoom} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
@@ -41,11 +45,39 @@ test('browser commands and login reject missing or foreign Origin, methods, and 
   assert.equal((await f.browser('/api/files')).status,404);
 });
 test('cookie is signed, HttpOnly and expires; logout drops session cookie', async () => {
-  const f = await fixture(), token = await session(f.env.SESSION_KEY, Date.now() - 13*3600_000);
+  const f = await fixture(), token = await session(f.env.SESSION_KEY, Date.now() - 31*24*3600_000);
   assert.equal(await authorized(new Request(root,{headers:{Cookie:'compya_session='+token}}),f.env.SESSION_KEY),false);
   assert.equal((await f.req('/api/status',undefined,{Cookie:f.cookie+'tampered'})).status,401);
   const login = await f.req('/api/login',{key:f.owner}); assert.match(login.headers.get('Set-Cookie'),/HttpOnly; Secure; SameSite=Strict/);
   assert.match((await f.browser('/api/logout',{})).headers.get('Set-Cookie'),/Max-Age=0/);
+});
+test('30-day login is explicit and an existing session can be remembered without reentering key', async () => {
+  const f = await fixture();
+  assert.match((await f.req('/api/login',{key:f.owner,remember:true})).headers.get('Set-Cookie'),/Max-Age=2592000/);
+  assert.match((await f.req('/api/login',{key:f.owner,remember:false})).headers.get('Set-Cookie'),/Max-Age=43200/);
+  assert.match((await f.browser('/api/session/remember',{})).headers.get('Set-Cookie'),/Max-Age=2592000/);
+  assert.equal((await f.req('/api/session/remember',{})).status,401);
+  assert.equal((await f.browser('/api/session/remember',{}, {Origin:'https://evil.example'})).status,403);
+});
+test('PWA manifest, fresh service worker and PNG icons are served with restrictive policy', async () => {
+  const f=await fixture();
+  const manifest=await (await f.req('/manifest.webmanifest')).json();assert.equal(manifest.display,'standalone');assert.equal(manifest.start_url,'/');
+  for (const size of [192,512]) {
+    const image=await f.req(`/icon-${size}.png`);assert.equal(image.headers.get('Content-Type'),'image/png');
+    const raw=new DataView(await image.arrayBuffer());assert.equal(raw.getUint32(16),size);assert.equal(raw.getUint32(20),size);
+  }
+  const sw=await f.req('/sw.js');assert.equal(sw.headers.get('Cache-Control'),'no-store');assert.match(await sw.text(),/compya-shell-2.0.20/);
+  assert.match((await f.req('/')).headers.get('Content-Security-Policy'),/worker-src 'self'; manifest-src 'self'/);
+});
+test('reboot requires a one-use, current-boot challenge and typed confirmation', async () => {
+  const f=await fixture();await f.sync({status:{startup_ready:true,can_start:true}});
+  const id=crypto.randomUUID();assert.equal((await f.browser('/api/command',{id,action:'reboot'})).status,403);
+  const challenge=await (await f.browser('/api/reboot-challenge',{})).json();
+  assert.equal((await f.browser('/api/command',{id,action:'reboot',challenge:challenge.id,confirmation:'PC 재부팅'})).status,202);
+  assert.equal((await f.browser('/api/command',{id,action:'reboot',challenge:challenge.id,confirmation:'PC 재부팅'})).status,200);
+  assert.equal((await f.browser('/api/command',{id:crypto.randomUUID(),action:'reboot',challenge:challenge.id,confirmation:'PC 재부팅'})).status,403);
+  await f.sync({status:{reboot_pending:true,startup_ready:true}});
+  assert.equal((await f.browser('/api/command',{id:crypto.randomUUID(),action:'reboot_cancel'})).status,202);
 });
 test('login failure rate is bounded', async () => {
   const f = await fixture(); for(let i=0;i<8;i++) assert.equal((await f.req('/api/login',{key:'wrong'})).status,401);

@@ -36,6 +36,8 @@ mobile_control.json
 mobile_commands.json
 mobile_control.tmp
 mobile_commands.tmp
+startup_restore.json
+startup_restore.tmp
 mobile_web/.dev.vars*
 mobile_web/.wrangler/
 .wrangler/

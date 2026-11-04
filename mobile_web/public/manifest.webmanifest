@@ -1,0 +1,10 @@
+{
+  "id": "/", "name": "컴프야 매크로", "short_name": "컴프야",
+  "description": "내 PC 매크로 시작·중지와 경기 화면 확인",
+  "lang": "ko", "start_url": "/", "scope": "/", "display": "standalone",
+  "background_color": "#0d1512", "theme_color": "#0d1512",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

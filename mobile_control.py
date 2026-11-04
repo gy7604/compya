@@ -81,7 +81,7 @@ class CommandJournal:
     def claim(self,command,boot_id,now):
         with self.lock:
             id_=command.get('id','')
-            if not re.fullmatch(r'[a-f0-9-]{36}',id_) or command.get('action') not in ('start','stop'):
+            if not re.fullmatch(r'[a-f0-9-]{36}',id_) or command.get('action') not in ('start','stop','reboot','reboot_cancel'):
                 return False
             if id_ in self.data:return False
             if command.get('boot_id')!=boot_id or not now<float(command.get('expires',0))<=now+35:return False

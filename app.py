@@ -53,6 +53,9 @@ class App:
         self.update_worker = None
         self.next_release = None
         self.mobile=None;self.mobile_manager=None;self.mobile_root=ROOT
+        from startup_restore import ResumeStore
+        self.resume_store=ResumeStore(ROOT)
+        self.reboot_pending=False;self.pc_rebooter=None
         self.mobile_capture_config={};self.mobile_mode='리그';self.mobile_publish_at=0
         self.fields = {}
         self.schedule_store=ScheduleStore(ROOT)
@@ -106,8 +109,8 @@ class App:
         ttk.Button(form, text='조건 규칙 관리', command=self.manage_rules).grid(row=4, column=2, padx=8)
         ttk.Button(form,text='자동 재접속 · 광고 닫기 설정',command=self.manage_recovery).grid(row=8,column=0,columnspan=2,sticky='w',pady=5)
         self.capturing = False
-        self.dry = tk.BooleanVar(value=True)
-        self.confirm = tk.BooleanVar(value=False)
+        self.dry = tk.BooleanVar(value=self.resume_store.data['dry'] if self.resume_store.data['enabled'] else True)
+        self.confirm = tk.BooleanVar(value=self.resume_store.data['confirmed'] if self.resume_store.data['enabled'] else False)
         ttk.Checkbutton(form, text='모의 실행 (탭 전송 안 함)', variable=self.dry).grid(row=5, column=0, columnspan=2, sticky='w')
         ttk.Checkbutton(form, text='게임에서 타격 OFF · 투구 ON · 풀 플레이를 직접 설정했습니다.', variable=self.confirm).grid(row=6, column=0, columnspan=3, sticky='w')
         ttk.Label(form,text='랭킹: 연속 경기 결과 화면을 1회로 집계 · 시작마다 0회로 초기화').grid(row=7,column=0,columnspan=2,sticky='w')
@@ -138,8 +141,8 @@ class App:
         buttons.pack(fill='x', padx=12)
         self.start_button = ttk.Button(buttons, text='시작', command=self.start)
         self.start_button.pack(side='left')
-        ttk.Button(buttons, text='중지 (Esc)', command=self.stop.set).pack(side='left', padx=8)
-        self.status = tk.StringVar(value='대기 중 · 기본 모의 실행')
+        ttk.Button(buttons, text='중지 (Esc)', command=self.request_stop).pack(side='left', padx=8)
+        self.status = tk.StringVar(value='대기 중 · 모의 실행' if self.dry.get() else '대기 중 · 저장된 실제 실행 설정')
         ttk.Label(buttons, textvariable=self.status,wraplength=650).pack(side='left')
         log_bar=ttk.Frame(root)
         log_bar.pack(fill='x',padx=12,pady=(8,0))
@@ -163,10 +166,11 @@ class App:
         handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
         self.logger.addHandler(handler)
         for name in resource_errors:self.logger.warning('업데이트 보조 파일 준비 실패 · %s',name)
-        root.bind('<Escape>', lambda e: self.stop.set())
+        root.bind('<Escape>', lambda e: self.request_stop())
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.closing = False
         if '--self-test' not in sys.argv:self.configure_mobile()
+        if '--restore-session' in sys.argv and '--self-test' not in sys.argv:root.after(2500,self.restore_session)
         root.after(100, self.poll)
         if '--self-test' not in sys.argv:
             root.after(1000, self.check_updates)
@@ -353,6 +357,19 @@ class App:
                 self.mobile_snapshot();self.mobile.start()
         except Exception:self.emit('모바일 연결 정보 확인 필요 · 매크로는 계속 사용할 수 있습니다.')
 
+    def request_stop(self):
+        if getattr(self,'resume_store',None):
+            try:self.resume_store.update(desired_running=False)
+            except OSError:self.emit('자동 재개 기록 저장 실패 · PC에서 연결 설정을 확인하세요.')
+        self.stop.set()
+
+    def restore_session(self):
+        if self.closing:return
+        if self.resume_store.should_resume(self.fields['serial'].get()):
+            ok,message=self.start(remote=True)
+            self.emit('Windows 로그인 후 자동 재개 · '+message)
+        else:self.emit('Windows 로그인 후 연결 복원 · 중지 상태 유지')
+
     def mobile_capture(self):
         # The feature captures only the designated LDPlayer0 game, never the desktop.
         cfg=self.mobile_capture_config
@@ -368,6 +385,7 @@ class App:
                  '지정된 LDPlayer 0번만 휴대폰에서 사용할 수 있습니다.' if self.fields['serial'].get()!='127.0.0.1:5555' else '')
         self.mobile_capture_config=dict(running=running,adb=self.fields['adb'].get(),serial=self.fields['serial'].get())
         self.mobile.publish(dict(version=VERSION,running=running,stopping=bool(running and self.stop.is_set()),
+                    startup_ready=self.resume_store.data['enabled'] and self.confirm.get() and self.fields['serial'].get()=='127.0.0.1:5555',reboot_pending=self.reboot_pending,
                     can_start=not running and not blocked,blocked=blocked,dry=self.dry.get(),mode=self.mobile_mode,
                     status=self.status.get(),league_count=self.league_count_text.get(),season=self.league_season_text.get(),timing=self.league_time_text.get()))
 
@@ -376,14 +394,38 @@ class App:
         ok=False;message='현재 PC에서 명령을 실행할 수 없습니다.'
         if (not self.closing and not self.mobile.shutdown.is_set() and command.get('expires',0)>time.time()
                 and command.get('boot_id')==self.mobile.boot_id and self.mobile.journal.accepted(command['id'],command['action'])):
-            if command['action']=='stop':
-                self.stop.set();ok=True;message='중지 요청됨 · 진행 중인 호출이 끝나면 멈춥니다.'
+            if command['action']=='reboot':
+                ok,message=self.mobile_reboot()
+            elif command['action']=='reboot_cancel':
+                ok,message=self.cancel_mobile_reboot()
+            elif command['action']=='stop':
+                self.request_stop();ok=True;message='중지 요청됨 · 진행 중인 호출이 끝나면 멈춥니다.'
             elif self.fields['serial'].get()=='127.0.0.1:5555':
                 ok,message=self.start(remote=True)
         self.mobile.journal.finish(command['id'],message,ok)
         self.mobile_snapshot()
 
+    def mobile_reboot(self):
+        from pc_restart import RebootTimer
+        if not self.resume_store.data['enabled'] or not self.confirm.get() or self.reboot_pending or self.fields['serial'].get()!='127.0.0.1:5555':
+            return False,'PC의 자동 연결 설정과 재부팅 예약 상태를 확인하세요.'
+        running=bool(self.worker and self.worker.is_alive())
+        self.resume_store.update(desired_running=running,confirmed=self.confirm.get(),dry=self.dry.get(),serial=self.fields['serial'].get())
+        self.reboot_pending=True;self.stop.set()
+        self.pc_rebooter=RebootTimer(lambda ok:self.events.put(('reboot_result',ok)))
+        self.pc_rebooter.start()
+        self.emit('휴대폰 요청 · PC 재부팅 20초 예약 · Windows 로그인 후 연결 복원')
+        return True,'PC가 20초 뒤 재부팅됩니다. 예약 취소 버튼으로 취소할 수 있습니다.'
+
+    def cancel_mobile_reboot(self):
+        if not self.reboot_pending:return False,'이 프로그램이 예약한 재부팅이 없습니다.'
+        if not self.pc_rebooter or not self.pc_rebooter.cancel():return False,'이미 Windows에 재부팅을 요청했습니다. PC에서 상태를 확인하세요.'
+        self.reboot_pending=False;self.resume_store.update(desired_running=False)
+        self.emit('휴대폰 요청 · PC 재부팅 예약 취소 · 매크로는 시작 버튼으로 재개')
+        return True,'재부팅 예약을 취소했습니다. 매크로는 시작 버튼으로 재개하세요.'
+
     def start(self,remote=False):
+        if getattr(self,'reboot_pending',False):return False,'PC 재부팅 예약을 먼저 취소하세요.'
         if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
             return False,'이미 실행 중이거나 PC에서 설정 작업 중입니다.'
         try:
@@ -422,6 +464,7 @@ class App:
             config['dry'] = self.dry.get()
             if not self.confirm.get():
                 raise ValueError('게임 모드 설정 확인을 체크하세요.')
+            self.resume_store.update(desired_running=True,dry=config['dry'],confirmed=True,serial=config['serial'])
             import json
             (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules','progress','notifications','ranking','recovery')}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
@@ -434,14 +477,16 @@ class App:
         return True,'시작됨 · 현재 PC 설정으로 진행합니다.'
 
     def run(self, cfg):
-        if not cfg.get('schedule',{}).get('enabled'):
-            return self.run_session(cfg)
         try:
+            if not cfg.get('schedule',{}).get('enabled'):return self.run_session(cfg)
             ScheduledRunner(self,cfg,ROOT).run()
         except Exception as error:
             self.emit(f'일정 실행 중지 · {error}')
         finally:
             self.stop.set()
+            if getattr(self,'resume_store',None) and not self.reboot_pending:
+                try:self.resume_store.update(desired_running=False)
+                except OSError:self.emit('자동 재개 종료 기록 저장 실패 · PC에서 설정 확인 필요')
             self.emit('일정 실행 종료')
 
     def manage_schedule(self):
@@ -1094,6 +1139,11 @@ class App:
             except queue.Empty:
                 break
             if isinstance(msg, tuple):
+                if msg[0]=='reboot_result':
+                    if not msg[1]:
+                        self.reboot_pending=False;self.resume_store.update(desired_running=False)
+                        self.emit('PC 재부팅 요청 실패 · 자동 반복 없이 PC 확인 필요')
+                    continue
                 if msg[0]=='mobile_command':
                     if not self.closing and msg[1] is self.mobile:
                         try:self.mobile_command(msg[2])
@@ -1152,12 +1202,16 @@ class App:
             messagebox.showinfo('업데이트 중', '다운로드가 끝날 때까지 기다려 주세요. 실패 시 기존 프로그램을 계속 사용할 수 있습니다.')
             return
         self.closing = True
+        if self.reboot_pending:self.cancel_mobile_reboot()
         if self.mobile:self.mobile.close()
-        self.stop.set()
+        self.request_stop()
         self.status.set('종료 대기 중 (진행 중인 터치 응답 최대 15초)')
 
 
 if __name__ == '__main__':
+    if getattr(sys,'frozen',False) and '--self-test' not in sys.argv:
+        from startup_restore import single_instance
+        if not single_instance():raise SystemExit(0)
     root = tk.Tk()
     try:
         app = App(root)

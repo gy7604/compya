@@ -8,7 +8,7 @@ from mobile_control import MobileStore
 class MobileManager:
     def __init__(self,app):
         self.app=app;self.window=tk.Toplevel(app.root);self.window.title('휴대폰 웹 제어');self.window.transient(app.root)
-        self.window.geometry('480x640');self.store=MobileStore(app.mobile_root)
+        self.window.geometry('480x690');self.store=MobileStore(app.mobile_root)
         try:self.config=self.store.load()
         except Exception:self.config=None
         ttk.Label(self.window,text='휴대폰에서 시작·중지 / 상태 / 게임 화면 확인',font=('',12,'bold')).pack(pady=12)
@@ -17,12 +17,15 @@ class MobileManager:
             return
         self.enabled=tk.BooleanVar(value=self.config['enabled'])
         ttk.Checkbutton(self.window,text='휴대폰 제어 연결 사용',variable=self.enabled,command=self.apply).pack(anchor='w',padx=18)
+        self.startup=tk.BooleanVar(value=app.resume_store.data['enabled'])
+        ttk.Checkbutton(self.window,text='Windows 로그인 후 자동 연결 · 실행 중이던 경기 재개',variable=self.startup,command=self.apply_startup).pack(anchor='w',padx=18)
         ttk.Label(self.window,text='QR을 휴대폰 카메라로 읽으면 본인 연결 암호로 로그인합니다.\n이 QR과 연결 암호는 다른 사람에게 공유하지 마세요.',wraplength=440).pack(pady=10)
         self.canvas=tk.Canvas(self.window,width=300,height=300,bg='white',highlightthickness=0);self.canvas.pack()
         ttk.Button(self.window,text='내 휴대폰 연결 QR 표시',command=self.show_qr).pack(pady=8)
         ttk.Label(self.window,text=self.config['url'],wraplength=440).pack(pady=6)
         ttk.Button(self.window,text='웹 주소 복사',command=lambda:self.copy(self.config['url'])).pack()
         ttk.Button(self.window,text='연결 암호 복사',command=lambda:self.copy(self.config['owner_key'])).pack(pady=7)
+        ttk.Button(self.window,text='PC 재부팅 예약 취소',command=self.cancel_reboot).pack(pady=4)
         ttk.Label(self.window,text='PC 프로그램을 열어 두어야 합니다.\n시작은 PC에 설정된 모드·일정·모의 실행 여부를 그대로 사용합니다.\n게임 설정 확인 체크가 해제돼 있으면 휴대폰 시작도 제한됩니다.',wraplength=440).pack(pady=8)
 
     def copy(self,value):
@@ -41,3 +44,20 @@ class MobileManager:
         try:
             self.config['enabled']=self.enabled.get();self.store.save(self.config);self.app.configure_mobile()
         except Exception:messagebox.showerror('모바일 연결','연결 설정을 저장하지 못했습니다.',parent=self.window)
+
+    def apply_startup(self):
+        import sys
+        from startup_restore import set_startup
+        enabled=self.startup.get()
+        try:
+            if not getattr(sys,'frozen',False):raise ValueError('설치된 EXE에서 설정하세요.')
+            self.app.resume_store.update(enabled=False)
+            set_startup(sys.executable,enabled)
+            self.app.resume_store.update(enabled=enabled,desired_running=bool(self.app.worker and self.app.worker.is_alive()),
+                      confirmed=self.app.confirm.get(),dry=self.app.dry.get(),serial=self.app.fields['serial'].get())
+        except Exception:
+            self.startup.set(False);messagebox.showerror('자동 연결','자동 연결 설정 실패 · 설치된 프로그램을 확인하세요.',parent=self.window)
+
+    def cancel_reboot(self):
+        ok,message=self.app.cancel_mobile_reboot()
+        messagebox.showinfo('재부팅 예약',message,parent=self.window)
