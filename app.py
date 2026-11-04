@@ -52,6 +52,8 @@ class App:
         self.updating = False
         self.update_worker = None
         self.next_release = None
+        self.mobile=None;self.mobile_manager=None;self.mobile_root=ROOT
+        self.mobile_capture_config={};self.mobile_mode='리그';self.mobile_publish_at=0
         self.fields = {}
         self.schedule_store=ScheduleStore(ROOT)
         self.schedule=self.schedule_store.load()
@@ -129,6 +131,7 @@ class App:
         self.update_status = tk.StringVar(value=f'현재 v{VERSION} · 시작 시 업데이트 확인')
         ttk.Label(update_bar, textvariable=self.update_status).pack(side='left')
         ttk.Button(update_bar, text='업데이트 확인', command=self.check_updates).pack(side='right')
+        ttk.Button(update_bar, text='휴대폰 웹 제어', command=self.manage_mobile).pack(side='right',padx=6)
         self.install_button = ttk.Button(update_bar, text='업데이트 설치', state='disabled', command=self.install_update)
         self.install_button.pack(side='right', padx=8)
         buttons = ttk.Frame(root)
@@ -163,6 +166,7 @@ class App:
         root.bind('<Escape>', lambda e: self.stop.set())
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.closing = False
+        if '--self-test' not in sys.argv:self.configure_mobile()
         root.after(100, self.poll)
         if '--self-test' not in sys.argv:
             root.after(1000, self.check_updates)
@@ -331,9 +335,57 @@ class App:
                 self.emit('휴대폰 알림 전송 실패 · 인터넷과 알림 설정을 확인하세요. 자동 재전송하지 않습니다.')
         threading.Thread(target=task,daemon=True).start()
 
-    def start(self):
+    def manage_mobile(self):
+        from mobile_ui import MobileManager
+        if self.mobile_manager and self.mobile_manager.window.winfo_exists():
+            self.mobile_manager.window.lift();return
+        self.mobile_manager=MobileManager(self)
+
+    def configure_mobile(self):
+        from mobile_control import MobileAgent,MobileStore
+        if self.mobile:self.mobile.close();self.mobile=None
+        try:
+            config=MobileStore(self.mobile_root).load()
+            if config and config['enabled']:
+                agent=MobileAgent(self.mobile_root,config,lambda command:self.events.put(('mobile_command',agent,command)),self.mobile_capture,
+                                  lambda text:self.events.put(('mobile_connection',text)))
+                self.mobile=agent
+                self.mobile_snapshot();self.mobile.start()
+        except Exception:self.emit('모바일 연결 정보 확인 필요 · 매크로는 계속 사용할 수 있습니다.')
+
+    def mobile_capture(self):
+        # The feature captures only the designated LDPlayer0 game, never the desktop.
+        cfg=self.mobile_capture_config
+        if cfg.get('running') or cfg.get('serial')!='127.0.0.1:5555':return None
+        try:return ADB(cfg['adb'],cfg['serial']).screenshot()
+        except Exception:return None
+
+    def mobile_snapshot(self):
+        if not self.mobile:return
+        running=bool(self.worker and self.worker.is_alive())
+        blocked=('PC에서 게임 설정 확인을 체크하세요.' if not self.confirm.get() else
+                 'PC에서 설정 작업 중입니다.' if self.updating or self.capturing or self.closing else
+                 '지정된 LDPlayer 0번만 휴대폰에서 사용할 수 있습니다.' if self.fields['serial'].get()!='127.0.0.1:5555' else '')
+        self.mobile_capture_config=dict(running=running,adb=self.fields['adb'].get(),serial=self.fields['serial'].get())
+        self.mobile.publish(dict(version=VERSION,running=running,stopping=bool(running and self.stop.is_set()),
+                    can_start=not running and not blocked,blocked=blocked,dry=self.dry.get(),mode=self.mobile_mode,
+                    status=self.status.get(),league_count=self.league_count_text.get(),season=self.league_season_text.get(),timing=self.league_time_text.get()))
+
+    def mobile_command(self,command):
+        if not self.mobile:return
+        ok=False;message='현재 PC에서 명령을 실행할 수 없습니다.'
+        if (not self.closing and not self.mobile.shutdown.is_set() and command.get('expires',0)>time.time()
+                and command.get('boot_id')==self.mobile.boot_id and self.mobile.journal.accepted(command['id'],command['action'])):
+            if command['action']=='stop':
+                self.stop.set();ok=True;message='중지 요청됨 · 진행 중인 호출이 끝나면 멈춥니다.'
+            elif self.fields['serial'].get()=='127.0.0.1:5555':
+                ok,message=self.start(remote=True)
+        self.mobile.journal.finish(command['id'],message,ok)
+        self.mobile_snapshot()
+
+    def start(self,remote=False):
         if self.updating or self.capturing or (self.worker and self.worker.is_alive()):
-            return
+            return False,'이미 실행 중이거나 PC에서 설정 작업 중입니다.'
         try:
             config = {k: v.get() for k, v in self.fields.items()}
             config['games'] = int(config['games'])
@@ -373,12 +425,13 @@ class App:
             import json
             (ROOT/'last_settings.json').write_text(json.dumps({k: v for k, v in config.items() if k not in ('buttons','rules','progress','notifications','ranking','recovery')}, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
-            messagebox.showerror('설정 확인', str(e))
-            return
+            if not remote:messagebox.showerror('설정 확인', str(e))
+            return False,'설정을 확인하세요. '+str(e)[:120]
         self.stop.clear()
         self.start_button.configure(state='disabled')
         self.worker = threading.Thread(target=self.run, args=(config,), daemon=True)
         self.worker.start()
+        return True,'시작됨 · 현재 PC 설정으로 진행합니다.'
 
     def run(self, cfg):
         if not cfg.get('schedule',{}).get('enabled'):
@@ -411,6 +464,7 @@ class App:
             notification_config=cfg.get('notifications',default_notifications())
             notifier=NotificationDetector(notification_config,cfg['buttons'])
             ranking_config=dict(cfg.get('ranking',default_ranking()))
+            if hasattr(self,'events'):self.events.put(('mobile_mode','랭킹챌린지' if ranking_config['enabled'] else '리그'))
             ranking_config['all_attempts']=bool(cfg.get('_daily'))
             if cfg.get('_daily'):ranking_config['resume_active_batch']=cfg['_daily'].entry.get('active_batch')
             ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
@@ -628,6 +682,7 @@ class App:
                             adb_failures=0;need_connect=False;last_process_poll=float('-inf')
                     self.stop.wait(2);continue
                 previous_png,png=png,next_png
+                if getattr(self,'mobile',None):self.mobile.game_frame(png)
                 maintenance_now=time.monotonic() if isinstance(png,bytes) else 0
                 popup_results={key:matchers[key].find(png) for key in popup_closer.keys}
                 popup_action=popup_closer.observe({key:value[0] for key,value in popup_results.items()},maintenance_now)
@@ -1039,6 +1094,15 @@ class App:
             except queue.Empty:
                 break
             if isinstance(msg, tuple):
+                if msg[0]=='mobile_command':
+                    if not self.closing and msg[1] is self.mobile:
+                        try:self.mobile_command(msg[2])
+                        except Exception:self.emit('휴대폰 명령 처리 확인 필요 · 명령을 자동 반복하지 않습니다.')
+                    continue
+                if msg[0]=='mobile_connection':
+                    self.logger.info(msg[1]);continue
+                if msg[0]=='mobile_mode':
+                    self.mobile_mode=msg[1];continue
                 if msg[0]=='league_time':
                     if not self.closing:self.league_time_text.set(msg[1])
                     continue
@@ -1076,6 +1140,8 @@ class App:
         running = self.worker and self.worker.is_alive()
         if not running and not self.updating:
             self.start_button.configure(state='normal')
+        if time.monotonic()-self.mobile_publish_at>=1:
+            self.mobile_publish_at=time.monotonic();self.mobile_snapshot()
         if self.closing and not running:
             self.root.destroy()
             return
@@ -1086,8 +1152,9 @@ class App:
             messagebox.showinfo('업데이트 중', '다운로드가 끝날 때까지 기다려 주세요. 실패 시 기존 프로그램을 계속 사용할 수 있습니다.')
             return
         self.closing = True
+        if self.mobile:self.mobile.close()
         self.stop.set()
-        self.status.set('종료 대기 중 (진행 중인 ADB 호출 최대 5초)')
+        self.status.set('종료 대기 중 (진행 중인 터치 응답 최대 15초)')
 
 
 if __name__ == '__main__':
@@ -1115,6 +1182,7 @@ if __name__ == '__main__':
         app.manage_ranking()
         app.manage_recovery()
         app.manage_schedule()
+        app.manage_mobile()
         root.update()
         (ROOT/'logs'/'selftest.json').write_text(json.dumps({
             'frozen': bool(getattr(sys, 'frozen', False)), 'template_score': score,

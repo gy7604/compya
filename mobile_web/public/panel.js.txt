@@ -1,0 +1,77 @@
+'use strict';
+const $ = id => document.getElementById(id);
+let loggedIn = false, busy = false, snapshot = null, imageURL = null, lastScreen = 0, refreshing = false;
+const text = (id, value) => { $(id).textContent = value || ''; };
+const clock = value => value ? new Date(value).toLocaleTimeString('ko-KR', {timeZone: 'Asia/Seoul', hour12: false}) : '—';
+async function api(path, data) {
+  const response = await fetch(path, {method: data === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: data === undefined ? {} : {'Content-Type': 'application/json'}, body: data === undefined ? undefined : JSON.stringify(data), signal: AbortSignal.timeout(8000)});
+  if (response.status === 401 && path !== '/api/login') { showLogin(); throw new Error('다시 로그인해 주세요.'); }
+  if (!response.ok) { let error; try { error = (await response.json()).error; } catch {} throw new Error(error || '연결을 확인해 주세요.'); }
+  return response;
+}
+function showLogin() {
+  loggedIn = false; $('login').hidden = false; $('dashboard').hidden = true; $('logout').hidden = true;
+  if (imageURL) URL.revokeObjectURL(imageURL); imageURL = null; lastScreen = 0; $('screen').hidden = true;
+}
+function render(data) {
+  snapshot = data;
+  const status = data.status || {}, online = data.online;
+  $('connection').dataset.tone = online ? 'online' : 'offline'; text('connection', online ? 'PC 연결됨' : 'PC 연결 끊김');
+  text('updated', '확인 ' + clock(data.updated_at)); text('mode', status.mode || 'COMPYA');
+  text('run-state', !online ? 'PC 연결을 기다리는 중' : status.stopping ? '중지하는 중' : status.running ? '매크로 실행 중' : '매크로 대기 중');
+  text('status', online ? status.status || '현재 상태를 확인하고 있습니다.' : 'PC 전원·인터넷과 프로그램 실행 여부를 확인하세요.');
+  text('season', status.season || '확인 대기'); text('league-count', status.league_count || '확인 대기');
+  text('timing', status.timing || '확인 대기'); text('version', status.version ? 'Compya v' + status.version : 'Compya');
+  text('blocked', !status.running && online ? status.blocked || (status.dry ? '현재 PC는 모의 실행으로 설정되어 있습니다.' : '') : '');
+  const pending = data.command && ['queued', 'delivered'].includes(data.command.state);
+  $('start').disabled = busy || pending || !online || !status.can_start || status.running;
+  $('stop').disabled = busy || !online || (!status.running && !pending);
+  if (data.command) { text('command', data.command.message); $('command').dataset.error = ['rejected', 'unknown', 'expired'].includes(data.command.state); }
+  if (!online) { $('screen').hidden = true; $('screen-empty').hidden = false; text('screen-empty', '연결이 복구되면 새 게임 화면을 보여 드립니다.'); }
+}
+async function refresh() {
+  if (!loggedIn || document.hidden || refreshing) return;
+  refreshing = true;
+  try {
+    const data = await (await api('/api/status')).json(); render(data);
+    if (data.online && data.screen_at && data.screen_at !== lastScreen) {
+      const response = await api('/api/screen'); const url = URL.createObjectURL(await response.blob());
+      const previous = imageURL; imageURL = url; $('screen').src = url; $('screen').hidden = false; $('screen-empty').hidden = true;
+      lastScreen = data.screen_at; text('screen-time', '촬영 ' + clock(+response.headers.get('X-Captured-At')) + ' · 약 5초마다 갱신');
+      if (previous) URL.revokeObjectURL(previous);
+    } else if (!data.screen_at) { $('screen').hidden = true; $('screen-empty').hidden = false; text('screen-empty', 'PC에서 새 게임 화면을 기다리고 있습니다.'); }
+  } catch (error) {
+    if (loggedIn) render({...snapshot, online: false});
+    text('command', error.message); $('command').dataset.error = true;
+    $('start').disabled = true; $('stop').disabled = true;
+  } finally { refreshing = false; }
+}
+async function login(key) {
+  text('login-note', '연결 확인 중…');
+  try {
+    await api('/api/login', {key}); $('key').value = ''; text('command', ''); loggedIn = true;
+    $('login').hidden = true; $('dashboard').hidden = false; $('logout').hidden = false; await refresh();
+  } catch (error) { text('login-note', error.message); $('login-note').dataset.error = true; }
+}
+async function send(action) {
+  if (busy) return; busy = true; $('start').disabled = true; $('stop').disabled = true; text('command', 'PC에 요청을 보내는 중…');
+  try { const result = await (await api('/api/command', {id: crypto.randomUUID(), action})).json(); text('command', result.message); }
+  catch (error) { text('command', error.message + ' 자동으로 다시 보내지 않습니다.'); $('command').dataset.error = true; }
+  finally { busy = false; await refresh(); }
+}
+$('login-form').addEventListener('submit', event => { event.preventDefault(); login($('key').value.trim()); });
+$('logout').addEventListener('click', async () => { try { await api('/api/logout', {}); showLogin(); } catch (error) { text('command', error.message); } });
+$('start').addEventListener('click', () => { text('start-mode', snapshot?.status?.dry ? '현재 설정: 모의 실행 · 게임 터치 없음' : '현재 설정: 실제 실행'); $('start-dialog').showModal(); });
+$('cancel-start').addEventListener('click', () => $('start-dialog').close());
+$('confirm-start').addEventListener('click', () => { $('start-dialog').close(); send('start'); });
+$('stop').addEventListener('click', () => send('stop'));
+$('refresh').addEventListener('click', () => refresh());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+setInterval(refresh, 5000);
+(async () => {
+  let key = new URLSearchParams(location.hash.slice(1)).get('key');
+  if (location.hash) history.replaceState(null, '', '/');
+  if (key) { await login(key); key = null; }
+  else { loggedIn = true; $('login').hidden = true; $('dashboard').hidden = false; $('logout').hidden = false; await refresh(); }
+})();

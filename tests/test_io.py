@@ -10,6 +10,7 @@ class ADBTests(unittest.TestCase):
         run.return_value = subprocess.CompletedProcess([], 0, b'', b'')
         ADB('adb.exe', '127.0.0.1:5555').tap((30, 40))
         self.assertEqual(run.call_args.args[0], ['adb.exe', '-s', '127.0.0.1:5555', 'shell', 'input', 'tap', '30', '40'])
+        self.assertEqual(run.call_args.kwargs['timeout'],15)
 
     @patch('adb.subprocess.run')
     def test_connection_failure(self, run):
@@ -21,3 +22,9 @@ class ADBTests(unittest.TestCase):
     def test_timeout(self, run):
         with self.assertRaises(RuntimeError):
             ADB('adb', 'emulator-5554').screenshot()
+        self.assertEqual(run.call_args.kwargs['timeout'],5)
+
+    @patch('adb.subprocess.run', side_effect=subprocess.TimeoutExpired('adb',15))
+    def test_slow_touch_is_bounded_and_never_resent(self,run):
+        with self.assertRaises(RuntimeError):ADB('adb','127.0.0.1:5555').tap((30,40))
+        self.assertEqual(run.call_count,1)

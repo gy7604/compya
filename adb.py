@@ -7,10 +7,10 @@ class ADB:
             raise ValueError('ADB 장치 주소를 입력하세요.')
         self.executable, self.serial, self.timeout = executable, serial.strip(), timeout
 
-    def run(self, *args, device=True):
+    def run(self, *args, device=True, timeout=None):
         cmd = [self.executable] + (['-s', self.serial] if device else []) + list(args)
         try:
-            p = subprocess.run(cmd, capture_output=True, timeout=self.timeout,
+            p = subprocess.run(cmd, capture_output=True, timeout=self.timeout if timeout is None else timeout,
                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         except (OSError, subprocess.TimeoutExpired) as e:
             raise RuntimeError(f'ADB 실행/연결 실패: {e}') from e
@@ -28,7 +28,9 @@ class ADB:
         return self.run('exec-out', 'screencap', '-p')
 
     def tap(self, point):
-        self.run('shell', 'input', 'tap', str(point[0]), str(point[1]))
+        # LDPlayer's Android input process can finish slowly after a cold boot.
+        # Send once; a timeout remains ambiguous and is never blindly retried.
+        self.run('shell', 'input', 'tap', str(point[0]), str(point[1]),timeout=max(self.timeout,15))
 
 
     def app_running(self,package):

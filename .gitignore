@@ -32,3 +32,11 @@ league_reward*.json
 league_bonus_state.json
 ball_rest.json
 sponsor_state.json
+mobile_control.json
+mobile_commands.json
+mobile_control.tmp
+mobile_commands.tmp
+mobile_web/.dev.vars*
+mobile_web/.wrangler/
+.wrangler/
+mobile_web/node_modules/
