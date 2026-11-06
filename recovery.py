@@ -7,9 +7,11 @@ from engine import SafetyStop
 PACKAGE='com.com2us.futurecpb.android.google.global.normal'
 
 def default_recovery():
-    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],checkpoints=[],max_launches=3,stall_enabled=False,stall_seconds=180,restart_player=True,player_console='',player_index=0)
+    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],checkpoints=[],max_launches=3,stall_enabled=False,stall_seconds=180,restart_player=True,player_console='',player_index=0,memory_enabled=True,memory_limit_gb=12)
 
 def validate_draft(config):
+    if type(config.get('memory_enabled',True)) is not bool:raise ValueError('메모리 감시 설정을 확인하세요.')
+    if type(config.get('memory_limit_gb',12)) is not int or not 8<=config.get('memory_limit_gb',12)<=32:raise ValueError('메모리 정리 기준은 8~32GB입니다.')
     if config.get('target','ranking') not in ('ranking','league'):raise ValueError('복귀 대상 모드를 확인하세요.')
     if type(config.get('restart_player',True)) is not bool or not isinstance(config.get('player_console',''),str):raise ValueError('LDPlayer 재시작 설정을 확인하세요.')
     if type(config.get('player_index',0)) is not int or not 0<=config.get('player_index',0)<=999:raise ValueError('LDPlayer 번호는 0~999입니다.')
@@ -108,13 +110,17 @@ class RecoveryMachine:
             raise SafetyStop('자동 복구 한도 도달 · 추가 LDPlayer 재시작 없이 중지')
         if now-self.last_launch<30:return False
         self.launches+=1;self.last_launch=now
+        self.begin_return(now)
+        self.events.append(f'LDPlayer 복구 시도 · {self.launches}/{self.config["max_launches"]}회')
+        return True
+
+    def begin_return(self,now):
+        """Resume the configured route without spending/resetting a fault retry."""
         self.active=self.running=self.hold=True
         self.restored=False;self.route_since=now;self.missing=0;self.index=0
         self.pending=self.pending_type=self.suspended=None
         self.popup_taps=0
         self.counts={};self.since={};self.absent=0;self.next_allowed=float('-inf')
-        self.events.append(f'LDPlayer 복구 시도 · {self.launches}/{self.config["max_launches"]}회')
-        return True
 
     def ready(self,key,now):
         return self.counts.get(key,0)>=3 and now-self.since.get(key,now)>=float(self.records[key].get('click_delay',0))

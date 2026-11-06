@@ -34,6 +34,7 @@ from progress import ProgressStore, ProgressClicker, default_progress, validate_
 from ranking_schedule import ScheduleStore, ScheduledRunner
 from interruptions import CoachAdvice, VideoSkipper, PopupCloser
 from runtime_resources import ensure_runtime_resources
+from player_memory import create_memory_guard, safe_boundary, run_cleanup
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -48,6 +49,8 @@ class App:
         root.geometry('1000x760')
         self.events = queue.Queue()
         self.stop = threading.Event()
+        self.memory_request=threading.Event()
+        self.memory_available=False
         self.worker = None
         self.updating = False
         self.update_worker = None
@@ -131,6 +134,8 @@ class App:
         ttk.Label(root,textvariable=self.league_season_text).pack(anchor='w',padx=12,pady=3)
         self.league_time_text=tk.StringVar(value=LeagueTiming(ROOT).text())
         ttk.Label(root,textvariable=self.league_time_text).pack(anchor='w',padx=12,pady=3)
+        self.memory_text=tk.StringVar(value='플레이어 메모리 · 시작 후 0번 감시')
+        ttk.Label(root,textvariable=self.memory_text).pack(anchor='w',padx=12,pady=3)
         update_bar = ttk.Frame(root)
         update_bar.pack(fill='x', padx=12, pady=5)
         self.update_status = tk.StringVar(value=f'현재 v{VERSION} · 시작 시 업데이트 확인')
@@ -144,6 +149,7 @@ class App:
         self.start_button = ttk.Button(buttons, text='시작', command=self.start)
         self.start_button.pack(side='left')
         ttk.Button(buttons, text='중지 (Esc)', command=self.request_stop).pack(side='left', padx=8)
+        ttk.Button(buttons,text='메모리 정리 예약',command=self.request_memory_cleanup).pack(side='left',padx=4)
         self.status = tk.StringVar(value='대기 중 · 모의 실행' if self.dry.get() else '대기 중 · 저장된 실제 실행 설정')
         ttk.Label(buttons, textvariable=self.status,wraplength=650).pack(side='left')
         log_bar=ttk.Frame(root)
@@ -475,6 +481,7 @@ class App:
             if not remote:messagebox.showerror('설정 확인', str(e))
             return False,'설정을 확인하세요. '+str(e)[:120]
         self.stop.clear()
+        self.memory_request.clear()
         if getattr(self,'telemetry',None):self.telemetry.begin(config['dry'])
         self.start_button.configure(state='disabled')
         self.worker = threading.Thread(target=self.run, args=(config,), daemon=True)
@@ -502,11 +509,18 @@ class App:
         from ranking_schedule_ui import ScheduleManager
         ScheduleManager(self)
 
+    def request_memory_cleanup(self):
+        if not self.worker or not self.worker.is_alive() or not self.memory_available:
+            messagebox.showinfo('메모리 정리','실제 실행 중 0번 자동 재접속·메모리 감시가 켜져 있을 때 예약할 수 있습니다.');return
+        self.memory_request.set()
+        self.emit('메모리 정리 예약 · 현재 경기 종료 후 LDPlayer 정상 종료 및 재접속')
+
     def run_session(self, cfg):
         png, results, records, machine = None, {}, {}, None
         previous_png=None
         last_click=None
         recovery=ranking=None
+        memory_guard=None
         try:
             from vision import Matcher,PriceMatcher,OverlayMatcher
             from registry import validate
@@ -536,7 +550,8 @@ class App:
             video_keys=[r['id'] for r in cfg['buttons'] if r['enabled'] and r.get('video_skip') is True]
             video_ends=[r['id'] for r in cfg['buttons'] if r['enabled'] and r.get('video_intro_end') is True]
             video=VideoSkipper(video_keys,[r['id'] for r in cfg['buttons'] if r['id'] in video_keys and r.get('video_intro') is True],video_ends)
-            coach_matcher=Matcher(ROOT/'assets'/'coach_advice.png',.94,[265,120,450,215]) if cfg.get('coach_advice') and (ROOT/'assets'/'coach_advice.png').exists() else None
+            from coach_dialog import CoachDialog,FILES as COACH_FILES
+            coach_matcher=CoachDialog(ROOT) if cfg.get('coach_advice') and all((ROOT/'assets'/name).exists() for name in COACH_FILES) else None
             watchdog=StallWatch(recovery_config.get('stall_seconds',180))
             transition_watch=TransitionWatch()
             watch_enabled=recovery_config['enabled'] and recovery_config.get('stall_enabled',False)
@@ -618,9 +633,13 @@ class App:
             from player_ads import create_player_ads
             player_ads=create_player_ads(cfg,self.stop)
             player_restart=None
-            if watch_enabled and recovery_config.get('restart_player',True):
+            if recovery_config['enabled'] and (watch_enabled or recovery_config.get('memory_enabled',True)) and recovery_config.get('restart_player',True):
                 from player_restart import PlayerRestart
                 player_restart=PlayerRestart(recovery_config.get('player_console',''),recovery_config.get('player_index',0),adb,self.stop)
+            memory_guard=create_memory_guard(recovery_config,player_restart,ROOT,cfg['dry'])
+            self.memory_available=memory_guard is not None
+            if memory_guard:self.emit('0번 메모리 감시 ON · 30초 간격 · 2회 초과 시 경기 종료 후 정리 · 정상 종료만 사용')
+            elif hasattr(self,'events'):self.events.put(('player_memory','플레이어 메모리 · 감시 꺼짐 (0번 자동 재접속/실제 실행 필요)'))
             frames, interval = speed_settings(cfg.get('speed', DEFAULT_MODE))
             machine = WorkflowMachine(records, rules, time.monotonic(), detection_frames=frames)
             self.emit('시작 · ' + ('모의 실행' if cfg['dry'] else '실제 탭 전송'))
@@ -643,16 +662,19 @@ class App:
                 if cfg['dry']:
                     raise SafetyStop('모의 복구 감지 · '+reason+' · LDPlayer 재시작/게임 실행 안 함')
                 timing.cancel();time_event()
+                full_cycle=False
                 while not self.stop.is_set():
                     if not recovery.reserve_player_restart(time.monotonic()):return False
                     while recovery.events:self.emit(recovery.events.pop(0))
                     self.emit(f'자동 복구 · {reason} · LDPlayer {player_restart.index}번 재시작 · 부팅/ADB 연결 대기')
                     try:
-                        if not player_restart.restart():
+                        if not player_restart.restart(full=full_cycle):
                             self.stop.set();return False
                         if self.stop.is_set():return False
                         adb.launch_app(recovery_config['package'])
                     except RuntimeError as restart_error:
+                        full_cycle=True
+                        self.emit('다음 복구는 지정한 LDPlayer 완전 종료 후 실행 · 연결 프로세스 새로 구성')
                         self.emit(f'플레이어 복구 실패 · {recovery.launches}/{recovery_config["max_launches"]}회 · {restart_error}')
                         if recovery.launches>=recovery_config['max_launches']:
                             raise SafetyStop('자동 복구 한도 도달 · 플레이어 재시작/게임 실행 실패') from restart_error
@@ -692,7 +714,30 @@ class App:
                 recovery.launches,recovery.last_launch=launches,last_launch
                 transition_watch=TransitionWatch();watchdog.reset();last_process_poll=float('-inf')
 
+            def cleanup_memory():
+                nonlocal need_connect,adb_failures
+                memory_guard.policy.reserve(time.time())
+                request=getattr(self,'memory_request',None)
+                if request is not None:request.clear()
+                timing.cancel();time_event()
+                self.emit('메모리 정리 시작 · '+memory_guard.text())
+                if not run_cleanup(memory_guard,recovery,adb,self.stop,self.emit):return False
+                reset_maintenance();recovery.begin_return(time.monotonic())
+                need_connect=False;adb_failures=0
+                if hasattr(self,'events'):self.events.put(('player_memory',memory_guard.text()))
+                self.emit('메모리 정리 완료 · '+memory_guard.text()+' · 현재 모드 복귀 및 경기 재개 대기')
+                return True
+
             while not self.stop.is_set():
+                if memory_guard:
+                    request=getattr(self,'memory_request',None)
+                    if request is not None and request.is_set():memory_guard.policy.request()
+                    memory_guard.poll(time.monotonic())
+                    while memory_guard.events:self.emit(memory_guard.events.pop(0))
+                    if memory_guard.changed and hasattr(self,'events'):self.events.put(('player_memory',memory_guard.text()))
+                    if memory_guard.policy.due(False,time.time()):
+                        if not cleanup_memory():break
+                        continue
                 if player_ads:
                     host_hold=player_ads.observe(time.monotonic(),cfg['dry'])
                     while player_ads.events:self.emit(player_ads.events.pop(0))
@@ -762,6 +807,21 @@ class App:
                         last_click=dict(button=popup_action,point=point,time=maintenance_now,dry=cfg['dry'])
                         self.emit(f'{"모의 " if cfg["dry"] else ""}공지/광고 우선 닫기 · {records[popup_action]["name"]} · 점수={score:.3f}')
                     self.stop.wait(.2);continue
+                # Handle advice before rest/sponsor/video and the recovery
+                # deadline. A normal coach prompt must not cause player reboots.
+                if coach_matcher:
+                    present,_,_,_=coach_matcher.find(png)
+                    try:cancel_advice=coach.observe(present,maintenance_now)
+                    except SafetyStop as error:
+                        recover_transition(error);self.stop.wait(1);continue
+                    if cancel_advice:
+                        if not cfg['dry'] and not self.stop.is_set():adb.tap((454,292))
+                        self.emit('코치의 조언 · 투수 교체 안내 취소 · 경기 계속')
+                    if coach.resumed:
+                        reset_maintenance()
+                        self.emit('코치 안내 닫힘 확인 · 경기 버튼 다시 인식')
+                    if coach.hold:
+                        watchdog.reset();transition_watch=TransitionWatch();self.stop.wait(.2);continue
                 if not ranking_config['enabled']:
                     if balls.observe(png,maintenance_now,self.stop):
                         if not rest.active:
@@ -894,21 +954,6 @@ class App:
                 if self.stop.is_set():
                     break
                 now = time.monotonic()
-                if coach_matcher:
-                    present,_,_,coach_size=coach_matcher.find(png)
-                    if coach_size!=(720,1280):present=False
-                    try:cancel_advice=coach.observe(present,now)
-                    except SafetyStop as error:
-                        recover_transition(error);self.stop.wait(1);continue
-                    if cancel_advice:
-                        if not cfg['dry'] and not self.stop.is_set():adb.tap((454,292))
-                        self.emit('코치의 조언 · 투수 교체 안내 취소 · 경기 계속')
-                    if coach.resumed:
-                        machine=WorkflowMachine(records,rules,now,detection_frames=frames)
-                        transition_watch=TransitionWatch()
-                        self.emit('코치 안내 닫힘 확인 · 경기 버튼 다시 인식')
-                    if coach.hold:
-                        watchdog.reset();self.stop.wait(interval);continue
                 try:recovery_action=recovery.observe({key:result[0] for key,result in results.items()},now)
                 except SafetyStop as error:
                     recover_transition(error);self.stop.wait(1);continue
@@ -961,6 +1006,9 @@ class App:
                         and cfg.get('_handoff') and cfg['_handoff']()):
                     cfg['_yielded']=True
                     self.emit('리그 결과 확인 · 다음 경기 시작 전 랭킹으로 전환');break
+                if memory_guard and safe_boundary(count_enabled,counter,ranking,results,cfg.get('_daily')) and memory_guard.policy.due(True,time.time()):
+                    if not cleanup_memory():break
+                    continue
                 hits=notifier.observe({key:result[0] for key,result in results.items()})
                 if hits:
                     names=', '.join(records[key]['name'] for key in hits)
@@ -1133,6 +1181,8 @@ class App:
                 except Exception as diagnostic_error:
                     self.emit(f'중지 화면 저장 실패 · {diagnostic_error}')
         finally:
+            if memory_guard:memory_guard.close()
+            self.memory_available=False
             if 'timing' in locals():
                 timing.cancel();time_event()
             if not cfg.get('_scheduled'):self.stop.set()
@@ -1174,6 +1224,9 @@ class App:
                     self.mobile_mode=msg[1];continue
                 if msg[0]=='league_time':
                     if not self.closing:self.league_time_text.set(msg[1])
+                    continue
+                if msg[0]=='player_memory':
+                    if not self.closing:self.memory_text.set(msg[1])
                     continue
                 if msg[0]=='league_season':
                     if not self.closing:self.league_season_text.set(msg[1])

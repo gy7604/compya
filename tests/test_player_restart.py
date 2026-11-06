@@ -49,3 +49,20 @@ class PlayerTests(unittest.TestCase):
             p=self.build(Path(folder));p.command=Mock(side_effect=['0,game',''])
             p.stop.wait.return_value=True
             self.assertFalse(p.restart());p.adb.connect.assert_not_called()
+
+    def test_full_restart_quits_only_selected_instance_and_waits_before_launch(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            p=self.build(Path(folder));p.command=Mock(side_effect=['0,game,1,2,1,99,88','','0,game,1,2,1,99,88','0,game,0,0,0,0,0',''])
+            p.adb.run.return_value=b'1';self.assertTrue(p.restart(full=True))
+            self.assertEqual([c.args for c in p.command.call_args_list],[('list2',),('quit','--index','0'),('list2',),('list2',),('launch','--index','0')])
+
+    def test_full_restart_never_launches_a_duplicate_when_quit_is_unconfirmed(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            p=self.build(Path(folder));p.command=Mock(return_value='0,game,1,2,1,99,88')
+            with self.assertRaisesRegex(RuntimeError,'종료 확인 실패'):p.restart(full=True)
+            self.assertNotIn(('launch','--index','0'),[c.args for c in p.command.call_args_list])
+
+    def test_full_restart_can_be_cancelled_before_launch(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            p=self.build(Path(folder));p.command=Mock(side_effect=['0,game,1,2,1,99,88','']);p.stop.wait.return_value=True
+            self.assertFalse(p.restart(full=True));self.assertEqual(p.command.call_count,2)

@@ -34,12 +34,27 @@ class PlayerRestart:
                 self.adb.serial=original
                 raise
 
-    def restart(self):
+    def restart(self,full=False):
         rows=self.command('list2').splitlines()
         row=next((row.split(',') for row in rows if row.split(',')[0].strip()==str(self.index)),None)
         if row is None:
             raise RuntimeError('지정한 LDPlayer 인스턴스를 찾지 못했습니다.')
         if self.stop.is_set():return False
+        if full and len(row)>4 and row[4].strip()!='0':
+            # A VM reboot can preserve a broken host-side ADB/NAT process.
+            # Quit only this instance before re-launching; never kill the
+            # shared ADB server or another emulator's process.
+            self.command('quit','--index',str(self.index))
+            closed=False
+            quit_deadline=time.monotonic()+30
+            for _ in range(30):
+                if time.monotonic()>=quit_deadline:break
+                if self.stop.wait(1):return False
+                current=next((line.split(',') for line in self.command('list2').splitlines() if line.split(',')[0].strip()==str(self.index)),None)
+                if current is None or (len(current)>4 and current[4].strip()=='0'):
+                    closed=True;break
+            if not closed:raise RuntimeError('지정한 LDPlayer 종료 확인 실패 · 중복 실행 없이 중지')
+            row=['','','','','0']
         action='launch' if len(row)>4 and row[4].strip()=='0' else 'reboot'
         self.command(action,'--index',str(self.index))
         if self.stop.wait(10):return False

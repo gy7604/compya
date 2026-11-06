@@ -93,6 +93,7 @@ class PlayerRecoveryTests(unittest.TestCase):
     def test_ten_failed_restarts_send_one_failure_alert_and_stop(self):
         app,adb,player=self.run_case(fail_connect=True,boot_failure=True)
         self.assertEqual(player.restart.call_count,10)
+        self.assertEqual([c.kwargs for c in player.restart.call_args_list],[{'full':False}]+[{'full':True}]*9)
         app.dispatch_notification.assert_called_once()
         self.assertIn('10회',app.dispatch_notification.call_args.args[1])
         self.assertNotIn('boot timeout',app.dispatch_notification.call_args.args[1])
