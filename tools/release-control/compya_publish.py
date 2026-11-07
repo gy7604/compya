@@ -14,12 +14,13 @@ def validate_url(url):
 def validate_event(event,now):
     i=event.get('issue',{});c=event.get('comment',{})
     if (event.get('action')!='created' or event.get('repository',{}).get('full_name')!=REPO or event.get('sender',{}).get('login')!='gy7604' or i.get('number')!=ISSUE or i.get('title')!=TITLE or i.get('user',{}).get('login')!='gy7604' or 'pull_request' in i or c.get('user',{}).get('login')!='gy7604' or type(c.get('id')) is not int or c['id']<1 or c.get('created_at')!=c.get('updated_at')):raise ValueError('Dedicated original owner approval required')
+    if 'oaiusercontent.com' in c.get('body','').lower():raise ValueError('Private file addresses are never accepted in public approval text')
     stamp=int(datetime.fromisoformat(c['created_at'].replace('Z','+00:00')).timestamp())
     if not 0<=now-stamp<=900:raise ValueError('Approval expired')
-    match=re.fullmatch(r'/compya-publish approve ([A-Za-z0-9_-]{1,100}) ([a-f0-9]{40}) (\d+\.\d+\.\d+) ([a-f0-9]{64}) ([1-9][0-9]*) (https://\S+)',c.get('body',''))
+    match=re.fullmatch(r'/compya-publish approve ([A-Za-z0-9_-]{1,100}) ([a-f0-9]{40}) (\d+\.\d+\.\d+) ([a-f0-9]{64}) ([1-9][0-9]*) (sealed-v1)',c.get('body',''))
     if not match:raise ValueError('Exact candidate approval required')
-    validate_url(match[6]);version(match[3])
-    return dict(requestId=match[1],sourceSha=match[2],versionName=match[3],outerSha256=match[4],baselineReleaseId=int(match[5]),url=match[6],commentId=c['id'])
+    version(match[3])
+    return dict(requestId=match[1],sourceSha=match[2],versionName=match[3],outerSha256=match[4],baselineReleaseId=int(match[5]),delivery=match[6],commentId=c['id'])
 def inspect_bundle(path,r,destination):
     path=Path(path);out=Path(destination)
     if path.is_symlink() or not path.is_file() or path.stat().st_size>MAX or hashlib.sha256(path.read_bytes()).hexdigest()!=r['outerSha256']:raise ValueError('Exact approved bundle digest required')
@@ -62,6 +63,17 @@ def api(path,method='GET',body=None):
     return json.loads(gh(['api','--method',method,path,*(['--input','-'] if body else [])],body))
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
+def receive_file_url(event,r):
+    helper=Path(__file__).with_name('sealed_file_transfer.mjs')
+    result=subprocess.run(['node',str(helper),'--receive-private-pipe'],
+        input=json.dumps(dict(appId='compya',event=event,requestId=r['requestId'])),
+        capture_output=True,text=True,encoding='utf-8',errors='strict',timeout=205)
+    if result.returncode or len(result.stdout)>13000:
+        raise ValueError('Private file transfer stopped; no automatic retry')
+    payload=json.loads(result.stdout)
+    if not isinstance(payload,dict) or set(payload)!={'url'}:
+        raise ValueError('Private file transfer payload rejected')
+    return validate_url(payload['url'])
 def main():
     p=argparse.ArgumentParser();p.add_argument('--event',required=True);p.add_argument('--inspect-bundle');p.add_argument('--output');a=p.parse_args()
     event=json.loads(Path(a.event).read_text());r=validate_event(event,int(time.time()))
@@ -85,8 +97,9 @@ def main():
     if any(x.get('ref')=='refs/tags/'+tag for x in refs) or any(x.get('tag_name')==tag for x in releases):raise ValueError('Version already claimed; manual review required')
     with tempfile.TemporaryDirectory(prefix='approved-compya-publication-') as folder:
         root=Path(folder);bundle=root/'approved.zip'
+        private_file_url=receive_file_url(event,r)
         opener=urllib.request.build_opener(NoRedirect)
-        with opener.open(urllib.request.Request(validate_url(r['url']),headers={'User-Agent':'OwnerApprovedCompyaPublisher/1'}),timeout=60) as response,bundle.open('xb') as out:
+        with opener.open(urllib.request.Request(private_file_url,headers={'User-Agent':'OwnerApprovedCompyaPublisher/1'}),timeout=60) as response,bundle.open('xb') as out:
             size=0
             while True:
                 chunk=response.read(1024*1024)

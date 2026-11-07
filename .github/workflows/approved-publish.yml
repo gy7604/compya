@@ -19,16 +19,20 @@ jobs:
     timeout-minutes: 8
     permissions:
       contents: write
-      issues: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: c483e136dddc5a2075a74fb486177c087b8074c5
+          ref: e9cc924f532f341fca9f0038719efd5d2c3a2d7f
           sparse-checkout: tools/release-control
           sparse-checkout-cone-mode: false
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Verify approved existing bytes and publish without rebuilding or running the app
         env:
           GH_TOKEN: ${{ github.token }}
           COMPYA_PUBLICATION_ENABLED: ${{ vars.COMPYA_PUBLICATION_ENABLED }}
+          PUBLISHER_CONTROLLER_SHA: e9cc924f532f341fca9f0038719efd5d2c3a2d7f
         run: python3 -B tools/release-control/compya_publish.py --event "$GITHUB_EVENT_PATH"
