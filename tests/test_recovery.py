@@ -11,7 +11,7 @@ def fixture():
     records=[]
     for key in ['title','menu','goal','ad','ad2']:
         r=new_button(key);r.update(id=key,enabled=True,kind='condition',template=key+'.png',click_mode='fixed',click_point=[100,200],click_size=[720,1280]);records.append(r)
-    cfg=default_recovery();cfg.update(enabled=True,goal='goal',steps=['title','menu'],popups=['ad','ad2'],memory_enabled=False)
+    cfg=default_recovery();cfg.update(enabled=True,goal='goal',steps=['title','menu'],popups=['ad','ad2'],memory_enabled=False,start_player=False)
     return records,cfg
 
 def visible(*keys):return dict.fromkeys(keys,True)

@@ -194,12 +194,12 @@ class CleanupFlowTests(unittest.TestCase):
 
 
 class MemoryAppTests(unittest.TestCase):
-    def run_case(self,urgent=False,failure=False,dry=False,handoff=False):
+    def run_case(self,urgent=False,failure=False,dry=False,handoff=False,startup=False):
         from app import App
         app=App.__new__(App);app.stop=threading.Event();app.stop.wait=Mock(return_value=False)
         app.events=queue.Queue();app.emit=Mock();app.dispatch_notification=Mock()
         app.registry=Mock();app.registry.resolve.side_effect=lambda value:value
-        records,cfg=fixture();cfg.update(target='league',memory_enabled=True,max_launches=10)
+        records,cfg=fixture();cfg.update(target='league',memory_enabled=True,max_launches=10,start_player=startup)
         result=copy.deepcopy(records[0]);result.update(id='result',name='result',template='result.png');records.append(result)
         adb=Mock();adb.app_running.return_value=True
         screenshots=['goal','goal','result','result']
@@ -234,6 +234,12 @@ class MemoryAppTests(unittest.TestCase):
     def test_urgent_cleanup_happens_before_screenshot_or_opencv(self):
         app,adb,probe=self.run_case(urgent=True)
         adb.screenshot.assert_not_called();probe.recycle.assert_called_once();adb.launch_app.assert_called_once()
+        self.assertFalse(any('안전 중지' in c.args[0] for c in app.emit.call_args_list))
+
+    def test_startup_preserves_urgent_memory_recovery_before_game_probe(self):
+        app,adb,probe=self.run_case(urgent=True,startup=True)
+        adb.app_running.assert_not_called();adb.screenshot.assert_not_called()
+        probe.recycle.assert_called_once();adb.launch_app.assert_called_once()
         self.assertFalse(any('안전 중지' in c.args[0] for c in app.emit.call_args_list))
 
     def test_soft_cleanup_waits_for_stable_result_and_counts_before_reboot(self):

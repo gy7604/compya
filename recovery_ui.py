@@ -34,6 +34,8 @@ class RecoveryManager:
         console_row=ttk.Frame(win);console_row.pack(fill='x',padx=12)
         ttk.Label(console_row,text='ldconsole.exe 경로 (빈칸: ADB와 같은 폴더)').pack(side='left')
         ttk.Entry(console_row,textvariable=player_console,width=48).pack(side='left')
+        start_player=tk.BooleanVar(value=draft.get('start_player',True))
+        ttk.Checkbutton(win,text='시작 시 LDPlayer 0번 자동 실행 · 켜져 있으면 이어받기 (선택 모드 자동 복귀 사용 시)',variable=start_player).pack(anchor='w',padx=12,pady=4)
         memory_row=ttk.Frame(win);memory_row.pack(fill='x',padx=12,pady=5)
         memory=tk.BooleanVar(value=draft.get('memory_enabled',True));memory_limit=tk.StringVar(value=str(draft.get('memory_limit_gb',12)))
         ttk.Checkbutton(memory_row,text='0번 메모리 자동 관리 · 경기 종료 후 정상 종료/재접속',variable=memory).pack(side='left')
@@ -60,7 +62,7 @@ class RecoveryManager:
         def save():
             if app.capturing:return
             try:
-                candidate=dict(draft,restart_player=restart_player.get(),player_console=player_console.get().strip(),player_index=int(player_index.get()),stall_enabled=stall.get(),stall_seconds=int(stall_seconds.get()),enabled=enabled.get(),target='league' if target.get()=='일반 리그' else 'ranking',package=package.get().strip(),max_launches=int(limit.get()),goal=self.id_for(self.goal.get()),steps=self.routes,popups=self.popups,memory_enabled=memory.get(),memory_limit_gb=int(memory_limit.get()))
+                candidate=dict(draft,restart_player=restart_player.get(),player_console=player_console.get().strip(),player_index=int(player_index.get()),stall_enabled=stall.get(),stall_seconds=int(stall_seconds.get()),enabled=enabled.get(),target='league' if target.get()=='일반 리그' else 'ranking',package=package.get().strip(),max_launches=int(limit.get()),goal=self.id_for(self.goal.get()),steps=self.routes,popups=self.popups,memory_enabled=memory.get(),memory_limit_gb=int(memory_limit.get()),start_player=start_player.get())
                 app.recovery_store.save(candidate);app.recovery=copy.deepcopy(candidate);win.destroy()
             except Exception as e:messagebox.showerror('재접속 설정',str(e),parent=win)
         ttk.Button(win,text='설정 저장',command=save).pack(anchor='e',padx=12,pady=8)

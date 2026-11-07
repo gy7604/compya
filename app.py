@@ -633,9 +633,13 @@ class App:
             from player_ads import create_player_ads
             player_ads=create_player_ads(cfg,self.stop)
             player_restart=None
-            if recovery_config['enabled'] and (watch_enabled or recovery_config.get('memory_enabled',True)) and recovery_config.get('restart_player',True):
+            startup_enabled=recovery_config['enabled'] and recovery_config.get('start_player',True)
+            startup_player=None
+            if (startup_enabled and not cfg['dry']) or (recovery_config['enabled'] and (watch_enabled or recovery_config.get('memory_enabled',True)) and recovery_config.get('restart_player',True)):
                 from player_restart import PlayerRestart
-                player_restart=PlayerRestart(recovery_config.get('player_console',''),recovery_config.get('player_index',0),adb,self.stop)
+                selected_player=PlayerRestart(recovery_config.get('player_console',''),recovery_config.get('player_index',0),adb,self.stop)
+                if startup_enabled:startup_player=selected_player
+                if recovery_config.get('restart_player',True):player_restart=selected_player
             memory_guard=create_memory_guard(recovery_config,player_restart,ROOT,cfg['dry'])
             self.memory_available=memory_guard is not None
             if memory_guard:self.emit('0번 메모리 감시 ON · 30초 간격 · 2회 초과 시 경기 종료 후 정리 · 정상 종료만 사용')
@@ -727,6 +731,39 @@ class App:
                 if hasattr(self,'events'):self.events.put(('player_memory',memory_guard.text()))
                 self.emit('메모리 정리 완료 · '+memory_guard.text()+' · 현재 모드 복귀 및 경기 재개 대기')
                 return True
+
+            # Keep urgent memory recovery ahead of any game launch on Start.
+            if startup_enabled and not cfg['dry'] and memory_guard:
+                memory_guard.poll(time.monotonic())
+                while memory_guard.events:self.emit(memory_guard.events.pop(0))
+                if memory_guard.policy.due(False,time.time()):
+                    if not cleanup_memory():return
+                    startup_enabled=False  # cleanup already booted and launched the game
+
+            if startup_enabled:
+                if cfg['dry']:
+                    self.emit('모의 시작 준비 · LDPlayer/게임 자동 실행 안 함')
+                else:
+                    self.emit('시작 준비 · LDPlayer 0번 실행 상태 확인 · 꺼져 있으면 실행, 부팅 중이면 대기')
+                    try:
+                        if not startup_player.ensure_started():return
+                        if self.stop.is_set():return
+                        need_connect=False
+                        game_started=False
+                        if not adb.app_running(recovery_config['package']):
+                            if self.stop.is_set():return
+                            self.emit('시작 준비 · LDPlayer 부팅 완료 · 게임 실행')
+                            adb.launch_app(recovery_config['package']);game_started=True
+                        if game_started or startup_player.started_on_demand:
+                            recovery.begin_return(time.monotonic())
+                            self.emit('시작 준비 완료 · 접속 광고 처리 및 현재 모드 자동 진입')
+                        else:self.emit('시작 준비 완료 · 실행 중인 게임 그대로 이어받기 · 플레이어/게임 재시작 없음')
+                    except SafetyStop:raise
+                    except RuntimeError as startup_error:
+                        self.emit('시작 준비 실패 · '+str(startup_error))
+                        if not player_restart:raise
+                        if not reboot_player('시작 시 부팅/게임 실행 미확인'):return
+                        need_connect=False
 
             while not self.stop.is_set():
                 if memory_guard:

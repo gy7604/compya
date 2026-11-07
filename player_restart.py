@@ -2,6 +2,7 @@
 from pathlib import Path
 import subprocess
 import time
+from engine import SafetyStop
 
 def validate_serial(index, serial):
     allowed={f'emulator-{5554+2*index}',f'127.0.0.1:{5555+2*index}',f'localhost:{5555+2*index}'}
@@ -34,6 +35,42 @@ class PlayerRestart:
                 self.adb.serial=original
                 raise
 
+    def startup_state(self):
+        rows=[line.split(',') for line in self.command('list2').splitlines()
+              if line.split(',')[0].strip()==str(self.index)]
+        if len(rows)!=1 or len(rows[0])<7:raise SafetyStop('시작 준비 · 지정한 LDPlayer 실행 정보 확인 실패 · 추가 실행 안 함')
+        try:started,frontend,vm=(int(rows[0][i]) for i in (4,5,6))
+        except ValueError:raise SafetyStop('시작 준비 · LDPlayer 상태 확인 실패 · 추가 실행 안 함') from None
+        if started not in (0,1,2):raise SafetyStop('시작 준비 · 알 수 없는 LDPlayer 상태 · 추가 실행 안 함')
+        # Do not let the ordinary boot-retry path launch over a closing VM.
+        if started==0 and (frontend>0 or vm>0):
+            raise SafetyStop('시작 준비 · 이전 LDPlayer 0번 종료 미확인 · 중복 실행 없이 확인 필요')
+        return started!=0
+
+    def ensure_started(self):
+        """Start only a stopped instance 0; healthy/booting instances stay intact."""
+        if self.index!=0:raise SafetyStop('시작 자동 실행은 지정한 LDPlayer 0번만 지원합니다.')
+        self.started_on_demand=False
+        if self.stop.is_set():return False
+        if not self.startup_state() and not self.startup_state():
+            if self.stop.is_set():return False
+            self.command('launch','--index','0');self.started_on_demand=True
+            if self.stop.wait(10):return False
+        return self.wait_boot()
+
+    def wait_boot(self):
+        deadline=time.monotonic()+120
+        for _ in range(60):
+            if self.stop.is_set():return False
+            if time.monotonic()>=deadline:break
+            try:
+                self.connect_selected()
+                if self.adb.run('shell','getprop','sys.boot_completed').strip()==b'1':return True
+            except RuntimeError:pass
+            if self.stop.wait(2):return False
+        if self.stop.is_set():return False
+        raise RuntimeError('LDPlayer 준비 후 120초 안에 ADB 부팅 완료를 확인하지 못했습니다.')
+
     def restart(self,full=False):
         rows=self.command('list2').splitlines()
         row=next((row.split(',') for row in rows if row.split(',')[0].strip()==str(self.index)),None)
@@ -58,12 +95,4 @@ class PlayerRestart:
         action='launch' if len(row)>4 and row[4].strip()=='0' else 'reboot'
         self.command(action,'--index',str(self.index))
         if self.stop.wait(10):return False
-        deadline=time.monotonic()+120
-        while not self.stop.is_set() and time.monotonic()<deadline:
-            try:
-                self.connect_selected()
-                if self.adb.run('shell','getprop','sys.boot_completed').strip()==b'1':return True
-            except RuntimeError:pass
-            if self.stop.wait(2):return False
-        if self.stop.is_set():return False
-        raise RuntimeError('LDPlayer 재시작 후 120초 안에 ADB 부팅 완료를 확인하지 못했습니다.')
+        return self.wait_boot()

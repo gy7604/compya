@@ -7,9 +7,10 @@ from engine import SafetyStop
 PACKAGE='com.com2us.futurecpb.android.google.global.normal'
 
 def default_recovery():
-    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],checkpoints=[],max_launches=3,stall_enabled=False,stall_seconds=180,restart_player=True,player_console='',player_index=0,memory_enabled=True,memory_limit_gb=12)
+    return dict(enabled=False,target='ranking',package=PACKAGE,goal='',steps=[],popups=[],checkpoints=[],max_launches=3,stall_enabled=False,stall_seconds=180,restart_player=True,player_console='',player_index=0,memory_enabled=True,memory_limit_gb=12,start_player=True)
 
 def validate_draft(config):
+    if type(config.get('start_player',True)) is not bool:raise ValueError('시작 시 LDPlayer 자동 실행 설정을 확인하세요.')
     if type(config.get('memory_enabled',True)) is not bool:raise ValueError('메모리 감시 설정을 확인하세요.')
     if type(config.get('memory_limit_gb',12)) is not int or not 8<=config.get('memory_limit_gb',12)<=32:raise ValueError('메모리 정리 기준은 8~32GB입니다.')
     if config.get('target','ranking') not in ('ranking','league'):raise ValueError('복귀 대상 모드를 확인하세요.')
