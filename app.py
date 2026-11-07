@@ -828,7 +828,10 @@ class App:
                 if getattr(self,'mobile',None):self.mobile.game_frame(png)
                 maintenance_now=time.monotonic() if isinstance(png,bytes) else 0
                 popup_results={key:matchers[key].find(png) for key in popup_closer.keys}
-                popup_action=popup_closer.observe({key:value[0] for key,value in popup_results.items()},maintenance_now)
+                popup_found={key:value[0] for key,value in popup_results.items()}
+                from popup_appearance import read_appearances
+                popup_appearances=read_appearances(png,records,popup_found)
+                popup_action=popup_closer.observe(popup_found,maintenance_now,popup_appearances)
                 while popup_closer.events:self.emit(popup_closer.events.pop(0))
                 if popup_closer.resumed:
                     machine.league_result(maintenance_now)
@@ -1207,6 +1210,8 @@ class App:
                                  recovery_active=recovery.active if recovery else False,
                                  recovery_step=recovery.index if recovery else None,
                                  recovery_launches=recovery.launches if recovery else 0,
+                                 popup_closer=popup_closer.diagnostics() if 'popup_closer' in locals() else None,
+                                 popup_matches={key:dict(matched=value[0],score=round(value[2],4)) for key,value in popup_results.items()} if 'popup_results' in locals() else None,
                                  league_bonus=bonus.diagnostics() if 'bonus' in locals() else None,
                                  ranking_phase=ranking.phase if ranking else None)
                     path = write_stop_snapshot(ROOT, png, records, results,
