@@ -6,7 +6,7 @@ from unittest.mock import Mock,patch
 import cv2
 import numpy as np
 from engine import SafetyStop
-from price_ocr import PriceReader,parse_price,parse_payment,price_crop
+from price_ocr import PriceReader,parse_price,parse_payment,price_crop,payment_row
 from ranking_schedule import DailyRun,defaults,guard_action,KST
 from ranking import RankingMachine
 from datetime import datetime
@@ -14,6 +14,46 @@ from test_ranking import fixture
 
 
 class PriceTests(unittest.TestCase):
+    def payment_screen(self,amount='80',count='3/12',color=(0,180,220)):
+        frame=np.full((1280,720,3),255,np.uint8)
+        cv2.rectangle(frame,(300,775),(490,835),color,-1)
+        cv2.putText(frame,amount,(342,817),cv2.FONT_HERSHEY_SIMPLEX,.7,(255,255,255),2)
+        cv2.putText(frame,count,(398,654),cv2.FONT_HERSHEY_SIMPLEX,.45,(20,20,20),1)
+        return cv2.imencode('.png',frame)[1].tobytes()
+
+    def test_payment_row_keeps_short_and_large_prices_on_same_line(self):
+        for amount,color in [('80',(0,180,220)),('100,000',(180,100,0))]:
+            with self.subTest(amount=amount):
+                png=self.payment_screen(amount,color=color)
+                frame=cv2.imdecode(np.frombuffer(png,np.uint8),cv2.IMREAD_COLOR)
+                price=price_crop(png,(318,805),(360,805),(720,1280))
+                count=cv2.resize(frame[631:659,398:469],None,fx=4,fy=4)
+                row=payment_row(price,count)
+                self.assertEqual(row.shape[0],160)
+                self.assertGreater(row.shape[1],100)
+                self.assertTrue(np.all(row[:20]==255))
+                self.assertTrue(np.all(row[140:]==255))
+                self.assertGreater(np.count_nonzero(row<100),100)
+
+    def test_missing_price_or_count_cannot_become_payment_evidence(self):
+        blank=np.full((112,284,3),255,np.uint8)
+        digits=blank.copy();cv2.putText(digits,'3/12',(10,70),cv2.FONT_HERSHEY_SIMPLEX,2,(0,0,0),3)
+        for price,count in [(blank,digits),(digits,blank)]:
+            with self.assertRaises(SafetyStop):payment_row(price,count)
+
+    def test_counted_payment_requires_six_equal_readings_and_never_taps(self):
+        reader,adb,_,_,args=self.setup_verifier()
+        adb.screenshot.return_value=self.payment_screen()
+        reader.read.return_value=(80,3,12)
+        self.assertEqual(reader.verify(*args,with_count=True),(80,3,12))
+        self.assertEqual(adb.screenshot.call_count,3)
+        self.assertEqual(reader.read.call_count,6)
+        self.assertTrue(all(c.args[0].shape[0]==160 and c.args[3] is True for c in reader.read.call_args_list))
+        adb.tap.assert_not_called()
+        reader.read.side_effect=[(80,3,12),(80,2,12)]*3
+        with self.assertRaises(SafetyStop):reader.verify(*args,with_count=True)
+        adb.tap.assert_not_called()
+
     def test_payment_count_is_positive_evidence_not_a_guessed_limit(self):
         self.assertEqual(parse_payment('20,000 10/12'),(20000,10,12))
         self.assertEqual(parse_payment('30 0/12'),(30,0,12))

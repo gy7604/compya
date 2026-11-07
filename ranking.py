@@ -68,6 +68,7 @@ class RankingMachine:
         self.promotion_attempts=0
         self.promotion_absent=0
         self.completion_reason='';self.reward_verified=False;self.resuming_reward=False
+        self.initial_dialog_since=None
     def request_finish(self,reason):
         if self.completion_reason:return
         self.completion_reason=reason;self.target_reached=True
@@ -101,6 +102,24 @@ class RankingMachine:
             if key:self.counts[key]=self.counts.get(key,0)+1 if found.get(key,False) else 0
         self.reward_absent=0 if found.get(self.reward,False) else self.reward_absent+1
         lobby=found.get(lobby_key,False)
+        if self.initial_sync and self.phase=='lobby' and found.get(dialog,False):
+            self.hold=True
+            if self.initial_dialog_since is None:self.initial_dialog_since=now
+            if now-self.initial_dialog_since>=30:
+                raise SafetyStop('시작 시 열린 갱신 창의 재화를 확인하지 못했습니다. 구매 없이 확인 필요')
+            if not self.stable(dialog,found):return None
+            if self.config.get('resume_payment_pending') or self.config.get('resume_active_batch'):
+                raise SafetyStop('중단 전 갱신/경기 결과 미확인 · 기존 기록 보존 · 중복 구매 없이 확인 필요')
+            if self.stable(points_confirm,found) and not found.get(star_confirm,False):
+                self.phase='points_confirm'
+            elif self.stable(star_confirm,found) and not found.get(points_confirm,False):
+                if not self.config['allow_star']:raise SafetyStop('현재 별 갱신이 허용되지 않습니다. 구매하지 않습니다.')
+                self.phase='star_confirm'
+            else:return None
+            self.initial_sync=False
+            self.events.append('시작 시 기존 갱신 확인 창 이어받기 · 재화·금액·남은 횟수 재검증 후 진행')
+            return None
+        if not found.get(dialog,False):self.initial_dialog_since=None
         if (self.resuming_reward and self.phase=='reward_confirm'
                 and self.stable(lobby_key,found) and self.reward_absent>=3):
             self.resuming_reward=False;self.reward_verified=True;self.initial_sync=False

@@ -532,7 +532,9 @@ class App:
             ranking_config=dict(cfg.get('ranking',default_ranking()))
             if hasattr(self,'events'):self.events.put(('mobile_mode','랭킹챌린지' if ranking_config['enabled'] else '리그'))
             ranking_config['all_attempts']=bool(cfg.get('_daily'))
-            if cfg.get('_daily'):ranking_config['resume_active_batch']=cfg['_daily'].entry.get('active_batch')
+            if cfg.get('_daily'):
+                ranking_config['resume_active_batch']=cfg['_daily'].entry.get('active_batch')
+                ranking_config['resume_payment_pending']=bool(cfg['_daily'].entry.get('pending'))
             ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
             from ranking_summary import RankingResultReader
             result_reader=RankingResultReader(ROOT) if cfg.get('_daily') and cfg['schedule'].get('completion_notice') else None
@@ -1001,7 +1003,9 @@ class App:
                 if recovery.restored:
                     transition_watch=TransitionWatch()
                     completed=ranking.completed;target_reached=ranking.target_reached;completion_reason=ranking.completion_reason
-                    if cfg.get('_daily'):ranking_config['resume_active_batch']=cfg['_daily'].entry.get('active_batch')
+                    if cfg.get('_daily'):
+                        ranking_config['resume_active_batch']=cfg['_daily'].entry.get('active_batch')
+                        ranking_config['resume_payment_pending']=bool(cfg['_daily'].entry.get('pending'))
                     ranking=RankingMachine(ranking_config,cfg['buttons'],cfg.get('games',1))
                     ranking.completed=completed;ranking.target_reached=target_reached
                     ranking.completion_reason=completion_reason

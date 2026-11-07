@@ -38,6 +38,29 @@ def price_crop(png, icon, point, size):
     return cv2.resize(image[y:bottom,x:right],None,fx=4,fy=4,interpolation=cv2.INTER_CUBIC)
 
 
+def payment_row(price,count):
+    """Keep the actual digits, align their height, and read them on one line.
+
+    Windows OCR can drop a short price such as 80 when a separate, differently
+    colored count line is present. No digits or currency labels are inserted.
+    """
+    mask=(price.min(axis=2)>150)&((price.max(axis=2).astype(np.int16)-price.min(axis=2))<90)
+    if not mask.any() or mask.all():raise SafetyStop('갱신 금액의 숫자 형태를 확인하지 못했습니다.')
+    price=np.repeat(np.where(mask,0,255).astype(np.uint8)[:,:,None],3,axis=2)
+    tiles=[]
+    for image,pad in ((price,8),(count,5)):
+        ys,xs=np.where(cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)<150)
+        if len(xs)<8:raise SafetyStop('갱신 금액/횟수의 숫자 형태를 확인하지 못했습니다.')
+        image=image[max(0,int(ys.min())-pad):int(ys.max())+pad+1,
+                    max(0,int(xs.min())-pad):int(xs.max())+pad+1]
+        tiles.append(cv2.resize(image,(max(1,round(image.shape[1]*120/image.shape[0])),120),interpolation=cv2.INTER_CUBIC))
+    price,count=tiles
+    row=np.full((160,price.shape[1]+count.shape[1]+100,3),255,np.uint8)
+    row[20:140,20:20+price.shape[1]]=price
+    row[20:140,price.shape[1]+70:price.shape[1]+70+count.shape[1]]=count
+    return row
+
+
 class PriceReader:
     def __init__(self, helper):self.helper=Path(helper)
 
@@ -75,10 +98,7 @@ class PriceReader:
                     if not (0<=x<right<=size[0] and 0<=y<bottom<=size[1]):
                         raise SafetyStop('게임의 남은 횟수 영역이 올바르지 않습니다.')
                     count=cv2.resize(frame[y:bottom,x:right],None,fx=4,fy=4,interpolation=cv2.INTER_CUBIC)
-                    combined=np.full((image.shape[0]+count.shape[0]+52,max(image.shape[1],count.shape[1]),3),255,np.uint8)
-                    combined[:image.shape[0],:image.shape[1]]=image
-                    combined[image.shape[0]+40:image.shape[0]+40+count.shape[0],:count.shape[1]]=count
-                    image=combined
+                    image=payment_row(image,count)
                 for variant in (0,1):
                     if stop.is_set():return None
                     readings.append(self.read(image,folder,variant,with_count))

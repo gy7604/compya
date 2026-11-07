@@ -18,6 +18,50 @@ def fixture():
 def visible(*keys):return dict.fromkeys(keys,True)
 
 class RankingTests(unittest.TestCase):
+    def test_startup_payment_popup_adopts_currency_then_confirms_once(self):
+        for currency in ('points_confirm','star_confirm'):
+            with self.subTest(currency=currency):
+                records,cfg=fixture();cfg['allow_star']=True
+                machine=RankingMachine(cfg,records,100)
+                seen=visible('refresh_dialog',currency,'lobby','series')
+                self.assertEqual(self.frames(machine,seen,0),[None,None,None])
+                self.assertEqual(machine.phase,currency)
+                self.assertTrue(machine.hold)
+                self.assertEqual(machine.observe(seen,3),currency)
+                for now in range(4,15):self.assertIsNone(machine.observe(seen,now))
+                self.assertEqual(machine.phase,'refresh_return')
+
+    def test_startup_popup_never_rebuys_unconfirmed_payment_or_active_batch(self):
+        for field,value in [('resume_payment_pending',True),('resume_active_batch',11)]:
+            records,cfg=fixture();cfg.update(allow_star=True,**{field:value})
+            machine=RankingMachine(cfg,records,100)
+            seen=visible('refresh_dialog','star_confirm')
+            self.assertIsNone(machine.observe(seen,0));self.assertIsNone(machine.observe(seen,1))
+            with self.assertRaises(SafetyStop):machine.observe(seen,2)
+            self.assertEqual(machine.phase,'lobby');self.assertTrue(machine.initial_sync)
+
+    def test_startup_popup_rejects_stars_when_disabled(self):
+        machine=self.machine()
+        seen=visible('refresh_dialog','star_confirm')
+        self.assertIsNone(machine.observe(seen,0));self.assertIsNone(machine.observe(seen,1))
+        with self.assertRaises(SafetyStop):machine.observe(seen,2)
+        self.assertEqual(machine.phase,'lobby')
+
+    def test_startup_popup_ambiguity_has_bounded_wait_and_blocks_background_actions(self):
+        for currencies in [(),('points_confirm','star_confirm')]:
+            machine=self.machine()
+            seen=visible('refresh_dialog','lobby','series',*currencies)
+            for now in range(30):
+                self.assertIsNone(machine.observe(seen,now));self.assertTrue(machine.hold)
+            with self.assertRaises(SafetyStop):machine.observe(seen,30)
+            self.assertEqual(machine.phase,'lobby')
+
+    def test_startup_popup_missing_title_does_not_confirm_currency(self):
+        for currency in ('points_confirm','star_confirm'):
+            machine=self.machine()
+            for now in range(6):self.assertIsNone(machine.observe(visible(currency),now))
+            self.assertEqual(machine.phase,'lobby')
+
     def test_promotion_preserves_phase_counts_and_has_bounded_retries(self):
         records,config=fixture();r=new_button('promotion');r.update(id='promotion',enabled=True,kind='condition',template='promotion.png');records.append(r);config['promotion']='promotion'
         m=RankingMachine(config,records,100);m.phase='returning';m.completed=12
