@@ -24,6 +24,8 @@ ranking.json
 recovery.json
 player_memory_state.json
 player_memory_state.tmp
+player_network_state.json
+player_network_state.tmp
 ranking_schedule.json
 ranking_daily*.json
 ranking_schedule.lock

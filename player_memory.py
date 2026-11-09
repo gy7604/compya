@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import time
 from engine import SafetyStop
+from player_network import NetworkRecoveryStop
 
 GIB=1024**3
 
@@ -195,6 +196,8 @@ def run_cleanup(guard,recovery,adb,stop,emit):
             if stop.is_set():return False
             adb.launch_app(recovery.config['package'])
             return True
+        except NetworkRecoveryStop:
+            raise
         except (RuntimeError,OSError) as error:
             emit(f'메모리 정리 재접속 실패 · {attempt}/{attempts}회 · {error}')
             if attempt==attempts:

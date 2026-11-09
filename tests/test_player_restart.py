@@ -46,7 +46,7 @@ class PlayerTests(unittest.TestCase):
             self.assertEqual(p.command.call_args_list[1].args,('launch','--index','0'))
     def test_cancel_during_boot_wait(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
-            p=self.build(Path(folder));p.command=Mock(side_effect=['0,game',''])
+            p=self.build(Path(folder));p.command=Mock(side_effect=['0,game,0,0,0,-1,-1',''])
             p.stop.wait.return_value=True
             self.assertFalse(p.restart());p.adb.connect.assert_not_called()
 

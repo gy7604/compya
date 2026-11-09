@@ -14,6 +14,7 @@ class PlayerRestart:
         self.console=Path(console) if console else Path(adb.executable).resolve().with_name('ldconsole.exe')
         if not self.console.is_file():raise ValueError('LDPlayer ldconsole.exe 경로를 확인하세요.')
         self.index,self.adb,self.stop=index,adb,stop
+        self.network=None;self.network_fault=False
 
     def command(self,*args):
         result=subprocess.run([str(self.console),*args],capture_output=True,timeout=15,
@@ -59,39 +60,61 @@ class PlayerRestart:
         return self.wait_boot()
 
     def wait_boot(self):
-        deadline=time.monotonic()+120
+        started=time.monotonic();deadline=started+120
         for _ in range(60):
             if self.stop.is_set():return False
             if time.monotonic()>=deadline:break
             try:
                 self.connect_selected()
-                if self.adb.run('shell','getprop','sys.boot_completed').strip()==b'1':return True
+                if self.adb.run('shell','getprop','sys.boot_completed').strip()==b'1':
+                    self.network_fault=False;return True
             except RuntimeError:pass
+            if self.network is not None and time.monotonic()-started>=12 and self.startup_state() and self.network.broken():
+                self.network_fault=True
+                raise RuntimeError('0번 통신 중계 미실행 · 통신 복구를 포함한 재접속 필요')
             if self.stop.wait(2):return False
         if self.stop.is_set():return False
         raise RuntimeError('LDPlayer 준비 후 120초 안에 ADB 부팅 완료를 확인하지 못했습니다.')
 
     def restart(self,full=False):
         rows=self.command('list2').splitlines()
-        row=next((row.split(',') for row in rows if row.split(',')[0].strip()==str(self.index)),None)
-        if row is None:
+        selected=[row.split(',') for row in rows if row.split(',')[0].strip()==str(self.index)]
+        if len(selected)!=1 or len(selected[0])<7:
             raise RuntimeError('지정한 LDPlayer 인스턴스를 찾지 못했습니다.')
+        row=selected[0]
+        try:
+            if int(row[4]) not in (0,1,2):raise ValueError()
+            int(row[5]);int(row[6])
+        except ValueError:raise SafetyStop('LDPlayer 재시작 정보 확인 실패 · 추가 실행 안 함') from None
         if self.stop.is_set():return False
+        if self.network is not None and (row[4].strip()!='0' or self.network_fault):
+            if self.network.repair_if_needed():full=True;self.network_fault=False
+            if self.stop.is_set():return False
         if full and len(row)>4 and row[4].strip()!='0':
             # A VM reboot can preserve a broken host-side ADB/NAT process.
             # Quit only this instance before re-launching; never kill the
             # shared ADB server or another emulator's process.
-            self.command('quit','--index',str(self.index))
-            closed=False
-            quit_deadline=time.monotonic()+30
-            for _ in range(30):
-                if time.monotonic()>=quit_deadline:break
-                if self.stop.wait(1):return False
-                current=next((line.split(',') for line in self.command('list2').splitlines() if line.split(',')[0].strip()==str(self.index)),None)
-                if current is None or (len(current)>4 and current[4].strip()=='0'):
-                    closed=True;break
+            lease=self.network.vm_lease() if self.network is not None else None
+            try:
+                if self.stop.is_set():return False
+                self.command('quit','--index',str(self.index))
+                closed=False
+                quit_deadline=time.monotonic()+30
+                for _ in range(30):
+                    if time.monotonic()>=quit_deadline:break
+                    if self.stop.wait(1):return False
+                    current=[line.split(',') for line in self.command('list2').splitlines() if line.split(',')[0].strip()==str(self.index)]
+                    if len(current)!=1 or len(current[0])<7:raise SafetyStop('0번 종료 정보 확인 실패 · 추가 실행 안 함')
+                    current=current[0]
+                    try:closed=current[4].strip()=='0' and int(current[5])<=0 and int(current[6])<=0
+                    except ValueError:raise SafetyStop('0번 종료 정보 확인 실패 · 추가 실행 안 함') from None
+                    if closed and (lease is None or not lease.alive()):break
+                    closed=False
+            finally:
+                if lease is not None:lease.close()
             if not closed:raise RuntimeError('지정한 LDPlayer 종료 확인 실패 · 중복 실행 없이 중지')
             row=['','','','','0']
+        if self.stop.is_set():return False
         action='launch' if len(row)>4 and row[4].strip()=='0' else 'reboot'
         self.command(action,'--index',str(self.index))
         if self.stop.wait(10):return False

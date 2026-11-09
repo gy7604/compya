@@ -35,6 +35,7 @@ from ranking_schedule import ScheduleStore, ScheduledRunner
 from interruptions import CoachAdvice, VideoSkipper, PopupCloser
 from runtime_resources import ensure_runtime_resources
 from player_memory import create_memory_guard, safe_boundary, run_cleanup
+from player_network import configure_network_recovery,NetworkRecoveryStop
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
@@ -640,6 +641,8 @@ class App:
             if (startup_enabled and not cfg['dry']) or (recovery_config['enabled'] and (watch_enabled or recovery_config.get('memory_enabled',True)) and recovery_config.get('restart_player',True)):
                 from player_restart import PlayerRestart
                 selected_player=PlayerRestart(recovery_config.get('player_console',''),recovery_config.get('player_index',0),adb,self.stop)
+                if not cfg['dry'] and recovery_config.get('restart_player',True):
+                    configure_network_recovery(selected_player,ROOT,self.emit)
                 if startup_enabled:startup_player=selected_player
                 if recovery_config.get('restart_player',True):player_restart=selected_player
             memory_guard=create_memory_guard(recovery_config,player_restart,ROOT,cfg['dry'])
@@ -678,6 +681,8 @@ class App:
                             self.stop.set();return False
                         if self.stop.is_set():return False
                         adb.launch_app(recovery_config['package'])
+                    except NetworkRecoveryStop:
+                        raise
                     except RuntimeError as restart_error:
                         full_cycle=True
                         self.emit('다음 복구는 지정한 LDPlayer 완전 종료 후 실행 · 연결 프로세스 새로 구성')
@@ -1186,22 +1191,22 @@ class App:
         except Exception as e:
             cfg['_failed']=True
             if getattr(self,'telemetry',None):
-                self.telemetry.failure('player_error' if recovery and recovery.active and recovery.launches>=recovery.config['max_launches'] else 'macro_error')
+                self.telemetry.failure('player_error' if isinstance(e,NetworkRecoveryStop) or recovery and recovery.active and recovery.launches>=recovery.config['max_launches'] else 'macro_error')
             self.emit(f'안전 중지 · {e}')
-            if (recovery is not None and recovery.active and recovery.config['enabled']
-                    and recovery.launches>=recovery.config['max_launches']
+            if (recovery is not None and recovery.config['enabled']
+                    and (recovery.active and recovery.launches>=recovery.config['max_launches'] or isinstance(e,NetworkRecoveryStop))
                     and not self.stop.is_set()):
                 if cfg['dry']:
                     self.emit('모의 복구 실패 알림 · 실제 휴대폰 전송 안 함')
                 elif notification_config.get('enabled'):
                     # One terminal exception per run, hence one alert. Do not
                     # send screenshots, device details, or raw exception text.
-                    text=f'컴프야 자동 복구를 {recovery.launches}회 시도했지만 경기 화면으로 복귀하지 못해 매크로를 중지했습니다. PC에서 플레이어와 게임 상태를 확인해주세요.'
+                    text=('컴프야 LDPlayer 0번 통신 자동 복구를 완료하지 못해 매크로를 중지했습니다. PC에서 연결 상태를 확인해주세요.' if isinstance(e,NetworkRecoveryStop) else f'컴프야 자동 복구를 {recovery.launches}회 시도했지만 경기 화면으로 복귀하지 못해 매크로를 중지했습니다. PC에서 플레이어와 게임 상태를 확인해주세요.')
                     self.dispatch_notification(notification_config,text)
-                    self.emit('자동 복구 한도 도달 · 휴대폰 알림 전송 요청')
+                    self.emit('0번 통신 복구 중지 · 휴대폰 알림 전송 요청' if isinstance(e,NetworkRecoveryStop) else '자동 복구 한도 도달 · 휴대폰 알림 전송 요청')
                 else:
                     self.emit('복구 실패 알림 미전송 · 휴대폰 알림 설정이 꺼져 있습니다.')
-            if isinstance(e, SafetyStop):
+            if isinstance(e, SafetyStop) and not isinstance(e,NetworkRecoveryStop):
                 if cfg['dry']:
                     self.emit('모의 실행은 클릭하지 않습니다. 모의 탭 후 게임 버튼을 직접 눌러 전환을 확인하세요.')
                 else:
