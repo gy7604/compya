@@ -224,7 +224,7 @@ class RecoveryTests(unittest.TestCase):
         adb=Mock();adb.app_running.return_value=False
         with patch('app.ADB',return_value=adb),patch('vision.Matcher'),patch('app.time.monotonic',side_effect=range(1000)):
             app.run(dict(buttons=records,rules=[],ranking=rank_cfg,recovery=recovery_cfg,games=2,dry=True,adb='adb',serial='device'))
-        adb.launch_app.assert_not_called();adb.tap.assert_not_called();adb.screenshot.assert_not_called()
+        adb.launch_app.assert_not_called();adb.tap.assert_not_called();self.assertTrue(adb.screenshot.called)
         self.assertTrue(any('모의 게임 재실행' in call.args[0] for call in app.emit.call_args_list))
 
     def test_relaunch_can_resume_from_a_later_visible_menu_when_title_was_skipped(self):

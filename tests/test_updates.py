@@ -1,13 +1,16 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+import sys
 from unittest.mock import patch
 import urllib.error
 import zipfile
 from updates import check_latest, stage_update, extract_package, version_tuple, UPDATE_ASSET, filesystem_path, VERSION
+import updater
 from updater import replace_runtime
 from package_release import build_archive
 
@@ -97,9 +100,27 @@ class UpdateTests(unittest.TestCase):
         data = archive_bytes()
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
             r = dict(url='https://github.com/a', size=len(data), sha256=hashlib.sha256(data).hexdigest())
-            package = stage_update(folder, r, lambda *a, **k: Response(data))
-            self.assertTrue((package/'V26Macro.exe').exists())
-            self.assertFalse((package/'buttons.json').exists())
+            root, _ = self.prepare_install(folder)
+            staged = stage_update(root, r, lambda *a, **k: Response(data))
+            self.assertTrue(staged.archive.is_file())
+            self.assertFalse((staged.archive.parent/'unpacked').exists())
+            updater.apply_staged_update(root, staged)
+            self.assertEqual((root/'V26Macro.exe').read_bytes(), b'MZnew')
+            self.assert_user_data(root)
+
+    def test_changed_staged_download_keeps_the_previous_runtime(self):
+        data = archive_bytes()
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            root, _ = self.prepare_install(folder)
+            release = dict(url='https://github.com/a', size=len(data), sha256=hashlib.sha256(data).hexdigest())
+            staged = stage_update(root, release, lambda *a, **k: Response(data))
+            # Simulate a staged file becoming corrupted before the helper starts.
+            staged.archive.write_bytes(bytes([data[0] ^ 1]) + data[1:])
+            with self.assertRaisesRegex(ValueError, '설치 전 업데이트 검증'):
+                updater.apply_staged_update(root, staged)
+            self.assertEqual((root/'V26Macro.exe').read_bytes(), b'MZold')
+            self.assertEqual((root/'_internal'/'runtime').read_bytes(), b'old')
+            self.assert_user_data(root)
 
     def test_zip_path_traversal_rejected(self):
         for name in ['V26Macro/../../escape', '/escape', 'V26Macro/..\\escape', 'V26Macro/C:/escape']:
@@ -166,12 +187,95 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual((root/'league_timing.json').read_bytes(),b'private durations')
             self.assert_user_data(root)
 
+    def test_update_does_not_replace_an_asset_created_during_publication(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            root, package = self.prepare_install(folder)
+            staged_asset = package/'assets'/'league_round_label.png'
+            staged_asset.parent.mkdir()
+            staged_asset.write_bytes(b'complete factory image')
+            installed_asset = root/'assets'/staged_asset.name
+            publish = Path.rename if os.name == 'nt' else os.link
+
+            def create_user_asset(source, target):
+                if source == staged_asset:
+                    installed_asset.write_bytes(b'user image created during update')
+                return publish(source, target)
+
+            owner, method = (Path, 'rename') if os.name == 'nt' else (os, 'link')
+            with patch.object(owner, method, create_user_asset):
+                replace_runtime(root, package)
+            self.assertEqual(installed_asset.read_bytes(), b'user image created during update')
+            self.assertEqual((root/'V26Macro.exe').read_bytes(), b'MZnew')
+            self.assert_user_data(root)
+
     def test_invalid_optional_ocr_runtime_does_not_start_replacement(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
             root,package=self.prepare_install(folder)
             (package/'PriceOCR.exe').write_bytes(b'bad')
             with self.assertRaises(ValueError):replace_runtime(root,package)
             self.assertEqual((root/'V26Macro.exe').read_bytes(),b'MZold')
+
+    def test_launch_passes_verified_archive_metadata_to_standalone_helper(self):
+        from updates import launch_helper
+        data = archive_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            root, _ = self.prepare_install(folder)
+            release = dict(url='https://github.com/a', size=len(data), sha256=digest)
+            staged = stage_update(root, release, lambda *a, **k: Response(data))
+            with patch.object(sys, 'frozen', True, create=True), patch('updates.subprocess.Popen') as popen:
+                launch_helper(root, staged)
+            arguments = popen.call_args.args[0]
+            self.assertIn('--archive', arguments)
+            self.assertIn(digest, arguments)
+            self.assertIn(str(len(data)), arguments)
+
+    def test_runtime_can_be_restored_after_an_abrupt_exit(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            root, package = self.prepare_install(folder)
+            original = Path.rename
+
+            def rename(path, target):
+                result = original(path, target)
+                if path == package/'_internal':
+                    raise KeyboardInterrupt('simulated process exit')
+                return result
+
+            with patch.object(Path, 'rename', rename), self.assertRaises(KeyboardInterrupt):
+                replace_runtime(root, package)
+            self.assertTrue((root/'.updates'/'pending.json').is_file())
+            self.assertTrue(updater.recover_interrupted_update(root))
+            self.assertEqual((root/'V26Macro.exe').read_bytes(), b'MZold')
+            self.assertEqual((root/'_internal'/'runtime').read_bytes(), b'old')
+            self.assertFalse(updater.recover_interrupted_update(root))
+            self.assert_user_data(root)
+
+    def test_standalone_recovery_restores_an_install_without_the_main_executable(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+            root, package = self.prepare_install(folder)
+            root = root.resolve()
+            launcher = root/'.updates'/'stage'/'UpdateLauncher.exe'
+            launcher.write_bytes(b'MZrecovery helper')
+            original = Path.rename
+
+            def rename(path, target):
+                result = original(path, target)
+                if path == root/'V26Macro.exe':
+                    raise KeyboardInterrupt('simulated exit while replacing the executable')
+                return result
+
+            with patch.object(Path, 'rename', rename), self.assertRaises(KeyboardInterrupt):
+                replace_runtime(root, package)
+            self.assertFalse((root/'V26Macro.exe').exists())
+            with (patch.object(sys, 'frozen', True, create=True),
+                  patch.object(sys, 'argv', [str(launcher)]),
+                  patch.object(sys, 'executable', str(launcher)),
+                  patch('updater.subprocess.Popen') as popen):
+                updater.main()
+            self.assertEqual((root/'V26Macro.exe').read_bytes(), b'MZold')
+            self.assertEqual((root/'_internal'/'runtime').read_bytes(), b'old')
+            self.assertEqual(popen.call_args.args[0], [str(root/'V26Macro.exe')])
+            self.assert_user_data(root)
 
     def test_failed_replacement_rolls_back(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:

@@ -101,7 +101,7 @@ class BallTests(unittest.TestCase):
             rest=BallRest(root,clock=lambda:now[0])
             matcher=Mock();matcher.find.return_value=(True,(1,1),1.,(720,1280))
             cfg=dict(buttons=[button],dry=False,notifications=dict(enabled=False),adb='adb',serial='device',_scheduled=True)
-            with patch('app.ROOT',Path(root)),patch('app.BallGuard',return_value=g),patch('app.ADB',return_value=adb),\
+            with patch('app.ROOT',Path(root)),patch('app.BallGuard',return_value=g),patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb),\
                     patch('vision.Matcher',return_value=matcher),patch('app.BallRest',return_value=rest),patch('app.BallBalanceReader',return_value=reader):
                 app.run_session(cfg)
             self.assertTrue(app.stop.is_set());self.assertFalse(rest.active)
@@ -128,7 +128,7 @@ class BallTests(unittest.TestCase):
             g=Mock(hold=True,reason='볼 부족',layout=None);g.observe.return_value=True
             matcher=Mock();matcher.find.return_value=(False,(1,1),0.,(720,1280))
             cfg=dict(buttons=[button],dry=False,notifications=dict(enabled=False),adb='adb',serial='device',_scheduled=True,_handoff=lambda:True)
-            with patch('app.ROOT',Path(root)),patch('app.BallGuard',return_value=g),patch('app.ADB',return_value=adb),patch('vision.Matcher',return_value=matcher):
+            with patch('app.ROOT',Path(root)),patch('app.BallGuard',return_value=g),patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb),patch('vision.Matcher',return_value=matcher):
                 app.run_session(cfg)
             self.assertTrue(cfg.get('_yielded'));self.assertFalse(app.stop.is_set())
             self.assertNotIn('_ranking_done',cfg);self.assertTrue(BallRest(root).active)

@@ -231,9 +231,9 @@ class MemoryAppTests(unittest.TestCase):
                 app.run_session(options)
         return app,adb,probe
 
-    def test_urgent_cleanup_happens_before_screenshot_or_opencv(self):
+    def test_urgent_loop_cleanup_follows_patch_inspection_before_game_inputs(self):
         app,adb,probe=self.run_case(urgent=True)
-        adb.screenshot.assert_not_called();probe.recycle.assert_called_once();adb.launch_app.assert_called_once()
+        adb.screenshot.assert_called_once();probe.recycle.assert_called_once();adb.launch_app.assert_called_once()
         self.assertFalse(any('안전 중지' in c.args[0] for c in app.emit.call_args_list))
 
     def test_startup_preserves_urgent_memory_recovery_before_game_probe(self):
@@ -251,7 +251,7 @@ class MemoryAppTests(unittest.TestCase):
 
     def test_exhausted_memory_cleanup_stops_without_game_taps(self):
         app,adb,probe=self.run_case(urgent=True,failure=True)
-        self.assertEqual(probe.recycle.call_count,10);adb.screenshot.assert_not_called();adb.tap.assert_not_called()
+        self.assertEqual(probe.recycle.call_count,10);adb.screenshot.assert_called_once();adb.tap.assert_not_called()
         app.dispatch_notification.assert_called_once()
         self.assertTrue(any('메모리 정리 재접속 한도 도달' in c.args[0] for c in app.emit.call_args_list))
 

@@ -20,7 +20,7 @@ class RunnerTests(unittest.TestCase):
         matcher=Mock()
         matcher.find.return_value=(True,(100,200),.99,(720,1280))
         cfg=dict(buttons=[button],adb='adb',serial='emulator-5554',dry=False)
-        with patch('app.ADB',return_value=adb),patch('vision.Matcher',return_value=matcher), \
+        with patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb),patch('vision.Matcher',return_value=matcher), \
              patch('app.time.monotonic',side_effect=range(1000)), \
              patch('diagnostics.write_stop_snapshot') as snapshot:
             app.run(cfg)
@@ -54,7 +54,7 @@ class RunnerTests(unittest.TestCase):
         cfg = dict(buttons=buttons, adb='adb', serial='emulator-5554', wait=180, dry=dry)
         if speed is not None:
             cfg['speed'] = speed
-        with patch('app.ADB', return_value=adb), patch('vision.Matcher', side_effect=factory), \
+        with patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB', return_value=adb), patch('vision.Matcher', side_effect=factory), \
              patch('app.time.monotonic', side_effect=range(100)), \
              patch('diagnostics.write_stop_snapshot') as snapshot:
             app.run(cfg)

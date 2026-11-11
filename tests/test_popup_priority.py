@@ -51,7 +51,7 @@ class PopupTests(unittest.TestCase):
         sponsor=Mock(active=True,recovering=False,hold=True,events=[])
         def matcher(path,*args,**kwargs):
             obj=Mock();obj.find.return_value=(str(path)=='ad.png',(100,200),.999,(720,1280));return obj
-        with tempfile.TemporaryDirectory() as folder,patch('app.ROOT',Path(folder)),patch('app.ADB',return_value=adb),\
+        with tempfile.TemporaryDirectory() as folder,patch('app.ROOT',Path(folder)),patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb),\
                 patch('vision.Matcher',side_effect=matcher),patch('app.BallRest',return_value=rest),patch('app.Sponsor',return_value=sponsor):
             app.run_session(dict(buttons=records,recovery=recovery,dry=False,adb='adb',serial='device'))
         self.assertEqual(adb.screenshot.call_count,3)

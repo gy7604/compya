@@ -20,7 +20,7 @@ class PlayerRecoveryTests(unittest.TestCase):
             value=Mock();value.find.return_value=(False,(100,200),.2,(720,1280));return value
         transition=Mock();transition.observe.side_effect=SafetyStop('화면 전환 확인 시간 초과')
         watchdog=Mock();watchdog.observe.return_value=False
-        with patch('app.ADB',return_value=adb),patch('player_restart.PlayerRestart',return_value=player), \
+        with patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb),patch('player_restart.PlayerRestart',return_value=player), \
              patch('app.StallWatch',return_value=watchdog),patch('app.TransitionWatch',return_value=transition), \
              patch('vision.Matcher',side_effect=matcher),patch('app.time.monotonic',side_effect=range(0,10000,40)):
             app.run(dict(buttons=records,recovery=cfg,adb='adb',serial='emulator-5554',dry=False))
@@ -63,7 +63,7 @@ class PlayerRecoveryTests(unittest.TestCase):
             value=Mock();value.find.return_value=(path=='title.png',(100,200),.99,(720,1280));return value
         notifications=dict(enabled=notify,watch=['title'],topic='test_'+('a'*32),message='test',stop=False)
         config=dict(buttons=records,recovery=cfg,notifications=notifications,adb='adb',serial='emulator-5554',dry=dry)
-        with patch('app.ADB',return_value=adb),patch('player_restart.PlayerRestart',return_value=player), \
+        with patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb),patch('player_restart.PlayerRestart',return_value=player), \
              patch('app.StallWatch',return_value=watchdog),patch('vision.Matcher',side_effect=matcher), \
              patch('app.time.monotonic',side_effect=range(0,40000,40)),patch('diagnostics.write_stop_snapshot'):
             app.run(config)

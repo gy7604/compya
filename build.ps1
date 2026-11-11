@@ -28,6 +28,11 @@ foreach ($assetName in $sponsorAssets) {
     Copy-Item -LiteralPath "$PSScriptRoot/assets/$assetName" -Destination "$PSScriptRoot/dist/V26Macro/assets/$assetName"
     Copy-Item -LiteralPath "$PSScriptRoot/assets/$assetName" -Destination "$compatAssets/$assetName"
 }
+$patchAssets = @('patch_download_title.png','patch_download_confirm.png','patch_complete_title.png','patch_complete_start.png')
+foreach ($assetName in $patchAssets) {
+    Copy-Item -LiteralPath "$PSScriptRoot/assets/$assetName" -Destination "$PSScriptRoot/dist/V26Macro/assets/$assetName"
+    Copy-Item -LiteralPath "$PSScriptRoot/assets/$assetName" -Destination "$compatAssets/$assetName"
+}
 $testProcess = Start-Process -FilePath "$PSScriptRoot/dist/V26Macro/V26Macro.exe" -ArgumentList '--self-test' -WindowStyle Hidden -PassThru
 if (-not $testProcess.WaitForExit(30000)) { throw 'Executable self-test timed out' }
 $testProcess.Refresh()

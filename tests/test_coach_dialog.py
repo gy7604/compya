@@ -39,7 +39,7 @@ class CoachDialogTests(unittest.TestCase):
             value=Mock();value.find.return_value=(False,(100,200),.2,(720,1280));return value
         with tempfile.TemporaryDirectory() as folder:
             assets=Path(folder)/'assets';assets.mkdir();(assets/'coach_title_v2.png').touch();(assets/'coach_cancel_v2.png').touch()
-            with patch('app.ROOT',Path(folder)),patch('app.ADB',return_value=adb),patch('vision.Matcher',side_effect=matcher),patch('coach_dialog.CoachDialog',return_value=marker),patch('app.BallRest') as rest,patch('app.Sponsor') as sponsor:
+            with patch('app.ROOT',Path(folder)),patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb),patch('vision.Matcher',side_effect=matcher),patch('coach_dialog.CoachDialog',return_value=marker),patch('app.BallRest') as rest,patch('app.Sponsor') as sponsor:
                 rest.return_value.events=[];rest.return_value.active=False
                 sponsor.return_value.events=[];sponsor.return_value.active=False
                 app.run_session(dict(buttons=records,recovery=recovery,coach_advice=True,dry=False,adb='adb',serial='device',_activate_route=True))

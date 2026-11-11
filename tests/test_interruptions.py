@@ -59,7 +59,7 @@ class VideoTests(unittest.TestCase):
         adb.screenshot.side_effect=screenshot
         def factory(path,*args,**kwargs):
             m=Mock();m.find.side_effect=lambda image:(current['key']==str(path).removesuffix('.png'),(100,200),.99,(720,1280));return m
-        with tempfile.TemporaryDirectory() as folder,patch('app.ROOT',Path(folder)),patch('app.ADB',return_value=adb),\
+        with tempfile.TemporaryDirectory() as folder,patch('app.ROOT',Path(folder)),patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb),\
                 patch('vision.Matcher',side_effect=factory),patch('app.time.monotonic',side_effect=itertools.count(0,.25)),\
                 patch('diagnostics.write_stop_snapshot'):
             app.run_session(dict(buttons=records,recovery=recovery,dry=False,adb='adb',serial='device',league_start='goal',league_result='result'))

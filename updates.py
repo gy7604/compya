@@ -1,4 +1,5 @@
 """Public GitHub release checks and verified staging; no credentials required."""
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -87,75 +88,109 @@ def safe_member(name):
         len(rel) == 2 and rel[0] == 'assets' and rel[1] in ('catcher.png', 'app.ico','coach_advice.png','league_next_match.png','league_round_label.png','league_play_hud.png'))
 
 
-def extract_package(archive, destination):
-    destination = Path(destination)
+def is_windows_executable(file):
+    if not file.is_file():
+        return False
+    with file.open('rb') as source:
+        return source.read(2) == b'MZ'
+
+
+def package_entries(archive):
     seen = set()
+    files = {}
+    entries = archive.infolist()
+    if len(entries) > 15000 or sum(i.file_size for i in entries) > MAX_EXTRACTED:
+        raise ValueError('업데이트 압축 크기 제한을 초과했습니다.')
+    for info in entries:
+        allowed = safe_member(info.filename)
+        if stat.S_ISLNK(info.external_attr >> 16):
+            raise ValueError('업데이트에 링크 파일을 포함할 수 없습니다.')
+        path = PurePosixPath(info.filename)
+        key = str(path).casefold()
+        if key in seen:
+            raise ValueError('업데이트에 중복 경로가 있습니다.')
+        seen.add(key)
+        if allowed and not info.is_dir():
+            files[path] = info
+    for name in ('V26Macro.exe', 'UpdateHelper.exe'):
+        info = files.get(PurePosixPath('V26Macro', name))
+        if info is None:
+            raise ValueError('업데이트 실행 파일이 없습니다.')
+        with archive.open(info) as source:
+            if source.read(2) != b'MZ':
+                raise ValueError('업데이트 실행 파일이 잘못되었습니다.')
+    if not any(path.parts[:2] == ('V26Macro', '_internal') for path in files):
+        raise ValueError('업데이트 실행 환경이 없습니다.')
+    return files
+
+
+def extract_package(archive, destination):
+    destination = Path(destination).resolve()
     with zipfile.ZipFile(archive) as z:
-        if len(z.infolist()) > 15000 or sum(i.file_size for i in z.infolist()) > MAX_EXTRACTED:
-            raise ValueError('업데이트 압축 크기 제한을 초과했습니다.')
-        for info in z.infolist():
-            allowed = safe_member(info.filename)
-            if stat.S_ISLNK(info.external_attr >> 16):
-                raise ValueError('업데이트에 링크 파일을 포함할 수 없습니다.')
-            key = info.filename.casefold().rstrip('/')
-            if key in seen:
-                raise ValueError('업데이트에 중복 경로가 있습니다.')
-            seen.add(key)
-            if info.is_dir() or not allowed:
-                continue
-            target = destination.joinpath(*PurePosixPath(info.filename).parts)
-            if not target.resolve().is_relative_to(destination.resolve()):
+        for path, info in package_entries(z).items():
+            target = destination.joinpath(*path.parts)
+            if not target.resolve().is_relative_to(destination):
                 raise ValueError('업데이트 경로가 범위를 벗어났습니다.')
             output_path = filesystem_path(target)
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with z.open(info) as source, output_path.open('wb') as output:
+            with z.open(info) as source, output_path.open('xb') as output:
                 shutil.copyfileobj(source, output)
-    package = destination/'V26Macro'
-    for name in ('V26Macro.exe', 'UpdateHelper.exe'):
-        if not (package/name).is_file() or (package/name).read_bytes()[:2] != b'MZ':
-            raise ValueError('업데이트 실행 파일이 없거나 잘못되었습니다.')
-    if not (package/'_internal').is_dir():
-        raise ValueError('업데이트 실행 환경이 없습니다.')
-    return package
+    return destination/'V26Macro'
+
+
+@dataclass(frozen=True)
+class StagedUpdate:
+    archive: Path
+    sha256: str
+    size: int
+
+
+def update_directory(root):
+    directory = root/'.updates'
+    if directory.resolve() != directory:
+        raise ValueError('업데이트 작업 폴더를 확인할 수 없습니다.')
+    directory.mkdir(exist_ok=True)
+    return directory
 
 
 def stage_update(root, release, opener=urllib.request.urlopen, progress=lambda value: None):
     root = Path(root).resolve()
-    stage = root/'.updates'/uuid.uuid4().hex
-    stage.mkdir(parents=True)
+    stage = update_directory(root)/uuid.uuid4().hex
+    stage.mkdir()
     archive = stage/'download.zip'
     request = urllib.request.Request(release['url'], headers={'User-Agent': f'V26Macro/{VERSION}'})
     digest = hashlib.sha256()
     total = 0
-    try:
-        with opener(request, timeout=20) as response, archive.open('wb') as output:
-            final = urllib.parse.urlsplit(response.geturl())
-            if final.scheme != 'https' or final.hostname not in (
-                'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'):
-                raise ValueError('허용되지 않은 다운로드 서버입니다.')
-            deadline = time.monotonic() + 600
-            while chunk := response.read(1024 * 1024):
-                total += len(chunk)
-                if total > release['size'] or total > MAX_DOWNLOAD or time.monotonic() > deadline:
-                    raise ValueError('다운로드 크기 또는 시간 제한을 초과했습니다.')
-                output.write(chunk)
-                digest.update(chunk)
-                progress(int(total * 100 / release['size']))
-        if total != release['size'] or digest.hexdigest() != release['sha256']:
-            raise ValueError('다운로드 파일 검증에 실패했습니다. 기존 프로그램을 유지합니다.')
-        return extract_package(archive, stage/'unpacked')
-    except Exception:
-        # Retain any staged diagnostics; live application is untouched.
-        raise
+    with opener(request, timeout=20) as response, archive.open('xb') as output:
+        final = urllib.parse.urlsplit(response.geturl())
+        if final.scheme != 'https' or final.hostname not in (
+            'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'):
+            raise ValueError('허용되지 않은 다운로드 서버입니다.')
+        deadline = time.monotonic() + 600
+        while chunk := response.read(1024 * 1024):
+            total += len(chunk)
+            if total > release['size'] or total > MAX_DOWNLOAD or time.monotonic() > deadline:
+                raise ValueError('다운로드 크기 또는 시간 제한을 초과했습니다.')
+            output.write(chunk)
+            digest.update(chunk)
+            progress(int(total * 100 / release['size']))
+    if total != release['size'] or digest.hexdigest() != release['sha256']:
+        raise ValueError('다운로드 파일 검증에 실패했습니다. 기존 프로그램을 유지합니다.')
+    with zipfile.ZipFile(archive) as z:
+        package_entries(z)
+    return StagedUpdate(archive, digest.hexdigest(), total)
 
 
-def launch_helper(root, package):
-    root, package = Path(root).resolve(), Path(package).resolve()
+def launch_helper(root, staged):
+    root, archive = Path(root).resolve(), staged.archive.resolve()
     if not getattr(sys, 'frozen', False):
         raise ValueError('자동 교체는 Windows 실행 파일 버전에서 사용할 수 있습니다.')
-    if not package.is_relative_to(root/'.updates'):
+    if archive.name != 'download.zip' or archive.parent.parent != root/'.updates':
         raise ValueError('잘못된 업데이트 작업 폴더입니다.')
-    launcher = package.parent.parent/'UpdateLauncher.exe'
+    launcher = archive.parent/'UpdateLauncher.exe'
     shutil.copy2(root/'UpdateHelper.exe', launcher)
-    return subprocess.Popen([str(launcher), '--root', str(root), '--package', str(package), '--pid', str(__import__('os').getpid())],
-        cwd=str(root), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    return subprocess.Popen(
+        [str(launcher), '--root', str(root), '--archive', str(archive),
+         '--archive-sha256', staged.sha256, '--archive-size', str(staged.size), '--pid', str(os.getpid())],
+        cwd=str(root), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+    )

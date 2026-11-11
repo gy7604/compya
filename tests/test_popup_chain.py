@@ -79,7 +79,7 @@ class PopupChainTests(unittest.TestCase):
         adb.tap.side_effect=tap
         def matcher(path,*args,**kwargs):
             result=Mock();result.find.return_value=(path=='ad.png',(230,1230),.99,(720,1280));return result
-        with tempfile.TemporaryDirectory() as folder,patch('app.ROOT',Path(folder)),patch('app.ADB',return_value=adb), \
+        with tempfile.TemporaryDirectory() as folder,patch('app.ROOT',Path(folder)),patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb), \
              patch('vision.Matcher',side_effect=matcher),patch('app.time.monotonic',side_effect=itertools.count(0,2)):
             app.run_session(dict(buttons=records,recovery=cfg,dry=False,adb='adb',serial='device'))
         self.assertEqual(adb.tap.call_count,4);adb.stop_app.assert_not_called();adb.launch_app.assert_not_called()

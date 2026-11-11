@@ -33,7 +33,7 @@ class StartupPaymentTests(unittest.TestCase):
                     key=path.removesuffix('.png');obj=Mock()
                     obj.find.return_value=(key in ('refresh_dialog','star_confirm'),(100,200),.99,(720,1280))
                     return obj
-                with patch('app.ADB',return_value=adb),patch('vision.Matcher',side_effect=matcher),patch('app.time.monotonic',side_effect=range(1000)),patch('price_ocr.PriceReader.verify',return_value=(80,3,12)) as verify:
+                with patch('patch_download.PatchDownload.scan',return_value=(False,False,None,None)),patch('app.ADB',return_value=adb),patch('vision.Matcher',side_effect=matcher),patch('app.time.monotonic',side_effect=range(1000)),patch('price_ocr.PriceReader.verify',return_value=(80,3,12)) as verify:
                     app.run_session(dict(buttons=records,rules=[],ranking=ranking,games=100,dry=False,adb='adb',serial='device',schedule=schedule,_daily=daily))
                 if pending:
                     verify.assert_not_called();adb.tap.assert_not_called()

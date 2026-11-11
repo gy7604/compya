@@ -547,6 +547,8 @@ class App:
                     self.emit('랭킹 보상 수령 이어받기 · 획득 팝업 확인 후 로비 복귀')
             recovery_config=recovery_for_mode(cfg.get('recovery',default_recovery()),ranking_config['enabled'])
             recovery=RecoveryMachine(recovery_config,cfg['buttons'])
+            from patch_download import PatchDownload,registered_popup_return
+            patch_download=PatchDownload(ROOT)
             popup_closer=PopupCloser(recovery_config['popups'] if recovery_config['enabled'] else [])
             if cfg.get('_activate_route'):recovery.active=True
             coach=CoachAdvice()
@@ -779,10 +781,7 @@ class App:
                     memory_guard.poll(time.monotonic())
                     while memory_guard.events:self.emit(memory_guard.events.pop(0))
                     if memory_guard.changed and hasattr(self,'events'):self.events.put(('player_memory',memory_guard.text()))
-                    if memory_guard.policy.due(False,time.time()):
-                        if not cleanup_memory():break
-                        continue
-                if player_ads:
+                if player_ads and not patch_download.hold:
                     host_hold=player_ads.observe(time.monotonic(),cfg['dry'])
                     while player_ads.events:self.emit(player_ads.events.pop(0))
                     if player_ads.resumed:reset_maintenance()
@@ -799,28 +798,16 @@ class App:
                         if player_restart:player_restart.connect_selected()
                         else:adb.connect()
                         need_connect=False
-                    if recovery_config['enabled'] and not ((rest.active or (sponsor.active and not sponsor.recovering)) and not ranking_config['enabled']):
-                        poll_now=time.monotonic()
-                        if poll_now-last_process_poll>=2:
-                            last_process_poll=poll_now
-                            launch=recovery.poll(adb.app_running(recovery_config['package']),poll_now)
-                            while recovery.events:self.emit(recovery.events.pop(0))
-                            if launch:
-                                if self.stop.is_set():break
-                                timing.cancel();time_event()
-                                if not cfg['dry']:adb.launch_app(recovery_config['package'])
-                                self.emit('모의 게임 재실행 · 실제 실행 안 함' if cfg['dry'] else '게임 실행 요청 전송 · 접속 화면 대기')
-                        if not recovery.running:
-                            self.stop.wait(.2);continue
                     next_png = adb.screenshot()
-                    adb_failures=0
                 except SafetyStop as error:
+                    if patch_download.hold:raise
                     if rest.active and not ranking_config['enabled']:
                         self.stop.wait(2);continue
                     if watch_enabled and player_restart and not cfg['dry']:
                         reboot_player(str(error));self.stop.wait(1);continue
                     raise
                 except RuntimeError as connection_error:
+                    if patch_download.hold:raise SafetyStop('패치 다운로드 중 화면 연결 끊김 · 재시작 없이 중지') from connection_error
                     if rest.active and not ranking_config['enabled']:
                         need_connect=True;self.stop.wait(2);continue
                     if not player_restart:raise
@@ -834,6 +821,63 @@ class App:
                 previous_png,png=png,next_png
                 if getattr(self,'mobile',None):self.mobile.game_frame(png)
                 maintenance_now=time.monotonic() if isinstance(png,bytes) else 0
+                def patch_resume(size):
+                    if any(value!=size for value in expected.values()):return None
+                    keys=([recovery_config.get('goal','')]+recovery_config.get('steps',[])+recovery_config.get('checkpoints',[])) if recovery_config['enabled'] else []
+                    keys += [ranking_config.get('lobby','')] if ranking_config['enabled'] else [counter.start,counter.result]
+                    for key in keys:
+                        if key in matchers and matchers[key].find(png)[0]:return key
+                    if recovery_config['enabled']:
+                        return registered_popup_return(png,records,matchers,recovery_config['popups'])
+                    return None
+                patch_point=patch_download.observe(png,maintenance_now,self.stop,patch_resume,expected.values())
+                while patch_download.events:self.emit(patch_download.events.pop(0))
+                if patch_download.hold:
+                    watchdog.reset();transition_watch=TransitionWatch()
+                    if patch_point and not self.stop.is_set():
+                        if not cfg['dry']:adb.tap(patch_point)
+                        last_click=dict(button=patch_download.last_action,point=patch_point,time=maintenance_now,dry=cfg['dry'])
+                        self.emit(f'{"모의 " if cfg["dry"] else ""}패치 {"게임시작" if patch_download.last_action=="patch_complete_start" else "다운로드 확인"} · 좌표={patch_point} · 각 1회 한정')
+                    self.stop.wait(.2);continue
+                if patch_download.finished:
+                    if recovery.route_since is not None:recovery.route_since+=patch_download.elapsed
+                    watchdog.reset();transition_watch=TransitionWatch()
+                    machine=WorkflowMachine(records,rules,maintenance_now,detection_frames=frames)
+                    progress=ProgressClicker(progress_config,cfg['buttons'])
+                if memory_guard and memory_guard.policy.due(False,time.time()):
+                    if not cleanup_memory():break
+                    continue
+                # Process recovery follows patch observation, never interrupts a download.
+                try:
+                    if recovery_config['enabled'] and not ((rest.active or (sponsor.active and not sponsor.recovering)) and not ranking_config['enabled']):
+                        poll_now=time.monotonic()
+                        if poll_now-last_process_poll>=2:
+                            last_process_poll=poll_now
+                            launch=recovery.poll(adb.app_running(recovery_config['package']),poll_now)
+                            while recovery.events:self.emit(recovery.events.pop(0))
+                            if launch:
+                                if self.stop.is_set():break
+                                timing.cancel();time_event()
+                                if not cfg['dry']:adb.launch_app(recovery_config['package'])
+                                self.emit('모의 게임 재실행 · 실제 실행 안 함' if cfg['dry'] else '게임 실행 요청 전송 · 접속 화면 대기')
+                        if not recovery.running:
+                            self.stop.wait(.2);continue
+                except SafetyStop as error:
+                    if watch_enabled and player_restart and not cfg['dry']:
+                        reboot_player(str(error));self.stop.wait(1);continue
+                    raise
+                except RuntimeError as connection_error:
+                    if rest.active and not ranking_config['enabled']:
+                        need_connect=True;self.stop.wait(2);continue
+                    if not player_restart:raise
+                    adb_failures+=1;need_connect=True
+                    self.emit(f'ADB 연결/프로세스 확인 실패 · {adb_failures}/3회 · {connection_error}')
+                    if self.stop.is_set():break
+                    if adb_failures>=3:
+                        if reboot_player('ADB 연속 실패'):
+                            adb_failures=0;need_connect=False;last_process_poll=float('-inf')
+                    self.stop.wait(2);continue
+                adb_failures=0
                 popup_results={key:matchers[key].find(png) for key in popup_closer.keys}
                 popup_found={key:value[0] for key,value in popup_results.items()}
                 from popup_appearance import read_appearances
@@ -1344,6 +1388,8 @@ if __name__ == '__main__':
         root.destroy()
         raise SystemExit(1)
     if '--self-test' in sys.argv:
+        from patch_download import PatchDownload
+        PatchDownload(ROOT).load()
         from vision import Matcher
         from capture import editor, point_editor
         png = (ROOT/'assets'/'catcher.png').read_bytes()
